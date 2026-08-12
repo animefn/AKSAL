@@ -6,9 +6,9 @@ Turns a song and its lyrics into syllable-timed karaoke. Works on openings,
 endings and insert songs alike.
 
 ```bash
-aksal phase1 --name OP01 --video EP01.mkv --lyrics lyrics.txt --reference song.flac
+aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.lines.ass
 # fix the lines in Aegisub, then
-aksal phase2 out/OP01.lines.ass
+aksal phase2 OP01.lines.ass
 ```
 
 *أكسل — "lazier". It does the tedious part.*
@@ -86,6 +86,33 @@ The acoustic model downloads from Hugging Face on first run and is cached.
 
 ---
 
+## Where files go
+
+Everything a run produces is a **visible sibling of the output**, sharing its
+stem. There is no project directory, no hidden state, and nothing is written to
+the tool's own folder:
+
+```
+D:/karaoke/
+    OP01.lines.ass          <- you edit this
+    OP01.lyrics.txt         <- fetched lyrics, editable
+    OP01.readings.tsv       <- reading overrides, editable
+    OP01.aksal.json         <- what phase 1 found
+    OP01.emissions.*.pt     <- cache
+    OP01.vocals.wav         <- isolated vocal stem
+    OP01.kara.jp.ass        <- phase 2 output
+    OP01.kara.romaji.ass
+```
+
+The caches live here too, deliberately. They are large, but they belong to one
+song and are worthless once you are done with it -- so `OP01.*` removes every
+trace of a run and there is nowhere else to go looking. (The acoustic model is
+different: it is shared across every song, so it stays in the normal Hugging
+Face cache.)
+
+Phase 2 needs no arguments beyond the lines file. It finds `OP01.aksal.json`
+next to it.
+
 ## Two input modes
 
 | | Mode A — reference | Mode B — video only |
@@ -125,14 +152,15 @@ different timestamp.
 ### Mode A — the normal case
 
 ```bash
-aksal phase1 --name OP01 \
+aksal phase1 \
     --video     EP01.mkv \
     --lyrics    lyrics.txt \
-    --reference "full song.flac"
+    --reference "full song.flac" \
+    -o          D:/karaoke/OP01.lines.ass
 ```
 
-Writes `out/OP01.lines.ass` and `work/OP01/readings.tsv`, and reports what it
-found:
+Writes `OP01.lines.ass` and `OP01.readings.tsv` into `D:/karaoke/`, and reports
+what it found:
 
 ```
   1 chunk(s), 87.1s of song in the video:
@@ -144,9 +172,9 @@ found:
 Fix the lines in Aegisub, fix any flagged readings, then:
 
 ```bash
-aksal phase2 out/OP01.lines.ass
+aksal phase2 D:/karaoke/OP01.lines.ass
 ```
-→ `out/OP01.kara.jp.ass` and `out/OP01.kara.romaji.ass`
+→ `OP01.kara.jp.ass` and `OP01.kara.romaji.ass`, beside the rest
 
 The lines file is phase 2's only required argument — the project is found from a
 header stamp phase 1 leaves in it, falling back to the filename.
@@ -154,7 +182,7 @@ header stamp phase 1 leaves in it, falling back to the filename.
 ### Mode B — no reference track
 
 ```bash
-aksal phase1 --name ED01 --video EP01.mkv --lyrics lyrics.txt \
+aksal phase1 --video EP01.mkv --lyrics lyrics.txt -o ED01.lines.ass \
     --song-start 21:30 --duration 90
 ```
 
@@ -164,7 +192,7 @@ Auto-detected; no flag needed. Output is named `.kara.kana.ass` rather than
 `.jp.ass`, because reconstructed kana is not the original orthography.
 
 ```bash
-aksal phase1 --name OP01 --video EP01.mkv --lyrics romaji.txt --reference song.flac
+aksal phase1 --video EP01.mkv --lyrics romaji.txt --reference song.flac -o OP01.lines.ass
 ```
 
 Measured on the same song, romaji vs Japanese lyrics: **line boundaries
@@ -205,8 +233,7 @@ aksal phase2 LINES [options]
 
 | flag | default | meaning |
 |---|---|---|
-| `--work DIR` | `./work` | State directory. |
-| `--out DIR` | `./out` | Output directory. Phase 2 defaults to the lines file's folder. |
+| `-o`, `--out PATH` | `<video>.lines.ass` in the current directory | Where to write the lines file. **Everything else is written beside it, sharing that stem.** phase1 only. |
 
 ### phase1
 
@@ -220,7 +247,6 @@ aksal phase2 LINES [options]
 | `--search START-END` | — | Restrict fingerprint search, e.g. `18:00-24:00` for an ED. |
 | `--search-window SEC` | `420` | Seconds of video to fingerprint. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
-| `--name NAME` | video stem | Project name. |
 | `--lead-in SEC` | `0` | Shift every cue earlier. |
 
 ### phase2
@@ -271,7 +297,7 @@ and cannot be used for alignment.
 
 ### Readings
 
-`work/<name>/readings.tsv` is an editable override table, keyed by **surface
+`<name>.readings.tsv`, beside the lines file, is an editable override table, keyed by **surface
 text, not line number**, so corrections survive splitting or reordering lines
 between phases.
 

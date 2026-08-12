@@ -19,6 +19,7 @@ from . import align as A
 from . import ass, locate, lyrics as lyrics_mod, moras, readings, romaji, separate
 from . import audio as audio_mod
 from .audio import envelope, prepare
+from . import project as project_mod
 from .project import Project
 
 MAX_HOLD = 2.0          # longest a single unit may be held before it is a rest
@@ -56,15 +57,15 @@ def parse_range(v: str) -> tuple[float, float]:
 
 def cmd_phase1(args) -> None:
     video: Path = args.video
-    name = args.name or video.stem[:60]
-    root: Path = args.work / name
-    root.mkdir(parents=True, exist_ok=True)
-    args.out = args.out or Path("out")
-    args.out.mkdir(parents=True, exist_ok=True)
+    # Everything is a sibling of the output you asked for. No project directory,
+    # nothing written to the tool's own folder.
+    out_lines = args.out or Path.cwd() / f"{video.stem[:60]}.lines.ass"
+    base = project_mod.stem_of(out_lines)
+    base.parent.mkdir(parents=True, exist_ok=True)
 
     mode = "reference" if args.reference else "video"
     window: tuple[float, float] | None = None   # slice of source to decode
-    log(f"project : {name}")
+    log(f"output  : {base}.*")
     log(f"mode    : {mode}")
 
     # --- 1. decide what audio we align against, and how it maps to the video --
@@ -129,18 +130,20 @@ def cmd_phase1(args) -> None:
         if window is not None:
             # demucs needs a file, so cut the window out first rather than
             # separating a whole episode to use 80 seconds of it.
-            source = audio_mod.extract_wav(source, root / "window.wav", *window)
+            source = audio_mod.extract_wav(
+                source, base.parent / (base.name + ".window.wav"), *window)
             window = None
-        align_source = separate.separate(source, root / "stems",
-                                         device=args.device, log=log)
+        align_source = separate.separate(
+            source, base.parent / (base.name + ".vocals.wav"),
+            device=args.device, log=log)
 
     log("\nlyrics")
-    lyrics_file = root / "lyrics.txt"
+    lyrics_file = base.parent / (base.name + ".lyrics.txt")
     resolved = lyrics_mod.resolve(args.lyrics, cache=lyrics_file,
                                   refresh=args.refresh_lyrics, log=log)
     log(resolved.describe())
 
-    proj = Project(name=name, root=root, video=video, lyrics=lyrics_file,
+    proj = Project(base=base, video=video,
                    mode=mode, align_audio=align_source,
                    reference=args.reference, segments=segments,
                    model=args.model, conditioned=not args.no_preprocess)
@@ -233,8 +236,7 @@ def cmd_phase1(args) -> None:
         raise SystemExit("nothing landed inside the song window -- check "
                          "--song-start / --duration.")
 
-    out_lines = args.out / f"{name}.lines.ass"
-    ass.write(out_lines, events, [ass.STYLE_JP], project=root.resolve())
+    ass.write(out_lines, events, [ass.STYLE_JP], project=base.resolve())
 
     # Flag readings worth a human look, including any the audio disagrees with.
     table = []
@@ -265,41 +267,33 @@ def cmd_phase1(args) -> None:
 # phase 2
 # =============================================================================
 
-def resolve_project(lines_file: Path, explicit: Path | None,
-                    work: Path) -> Path:
-    """Find the work directory belonging to a corrected lines file.
+def resolve_base(lines_file: Path, explicit: Path | None) -> Path:
+    """Find the stem whose state file belongs to this lines file.
 
     Phase 2 needs the audio path, the time mapping and the readings, but you
-    should not have to type any of that -- phase 1 already recorded it. Tried in
+    should not have to type any of that -- phase 1 wrote it next door. Tried in
     order, so an editor that mangles the header stamp is still recoverable.
     """
     if explicit:
-        return explicit
+        return project_mod.stem_of(explicit) if explicit.suffix else explicit
 
     stamped = ass.read_project_stamp(lines_file)
-    if stamped and (stamped / "project.json").exists():
-        return stamped
+    if stamped is not None:
+        cand = Path(stamped)
+        if (cand.parent / (cand.name + project_mod.STATE_SUFFIX)).exists():
+            return cand
 
-    # out/OP01.lines.ass -> work/OP01, and likewise OP01.lines.fixed.ass.
-    # Strip repeatedly: people stack these suffixes.
-    editing_suffixes = {"lines", "fixed", "corrected", "edited", "edit", "final"}
-    parts = lines_file.stem.split(".")
-    while len(parts) > 1 and parts[-1].lower() in editing_suffixes:
-        parts.pop()
-    guess = work / ".".join(parts)
-    if (guess / "project.json").exists():
+    guess = project_mod.stem_of(lines_file)
+    if (guess.parent / (guess.name + project_mod.STATE_SUFFIX)).exists():
         return guess
 
-    candidates = [p.parent for p in work.glob("*/project.json")]
-    if len(candidates) == 1:
-        return candidates[0]
-
     raise SystemExit(
-        f"cannot tell which project {lines_file.name} belongs to.\n"
-        f"  looked for: a header stamp, then {guess}\n"
-        + (f"  {len(candidates)} projects exist in {work}; "
-           "pass --project to pick one." if candidates
-           else f"  no projects found in {work} -- run phase1 first."))
+        f"no state file for {lines_file.name}.\n"
+        f"  looked for: a header stamp, then "
+        f"{guess.name + project_mod.STATE_SUFFIX} beside it\n\n"
+        "  If this subtitle was made by hand rather than by phase1, pass\n"
+        "  --video (and --reference if you have the clean track):\n"
+        f"    aksal phase2 {lines_file} --video EPISODE.mkv")
 
 
 def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Project:
@@ -312,9 +306,8 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
     song against a whole episode would otherwise compute emissions over 24 minutes
     of audio, nearly all of it dialogue with no text to match.
     """
-    name = args.name or lines_file.stem.split(".")[0]
-    root = args.work / name
-    root.mkdir(parents=True, exist_ok=True)
+    base = project_mod.stem_of(lines_file)
+    base.parent.mkdir(parents=True, exist_ok=True)
 
     pad = 2.0
     start = max(min(e.start for e in events) - pad, 0.0)
@@ -347,13 +340,15 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
     if not args.no_preprocess:
         log("\nisolating vocals")
         if a_start is not None:
-            source = audio_mod.extract_wav(source, root / "window.wav",
-                                           a_start, a_dur)
+            source = audio_mod.extract_wav(
+                source, base.parent / (base.name + ".window.wav"),
+                a_start, a_dur)
             a_start = a_dur = None
-        align_source = separate.separate(source, root / "stems",
-                                         device=args.device, log=log)
+        align_source = separate.separate(
+            source, base.parent / (base.name + ".vocals.wav"),
+            device=args.device, log=log)
 
-    proj = Project(name=name, root=root, video=args.video, lyrics=lines_file,
+    proj = Project(base=base, video=args.video,
                    mode="reference" if args.reference else "video",
                    align_audio=align_source, reference=args.reference,
                    segments=segments, model=args.model,
@@ -376,8 +371,7 @@ def cmd_phase2(args) -> None:
         proj = standalone_project(lines_file, events, args)
     else:
         try:
-            proj = Project.load(resolve_project(lines_file, args.project,
-                                                args.work))
+            proj = Project.load(resolve_base(lines_file, args.project))
         except SystemExit as exc:
             raise SystemExit(
                 f"{exc}\n\n"
@@ -477,8 +471,7 @@ def cmd_phase2(args) -> None:
     # From a romaji sheet the "JP" track is reconstructed kana, not the original
     # orthography -- there is no kanji to recover -- so name it honestly.
     kana_only = proj.lyrics_source == "romaji"
-    outdir = args.out or lines_file.parent
-    outdir.mkdir(parents=True, exist_ok=True)
+    base = proj.base
 
     if snapped:
         log(f"  snapped {snapped} mora start(s) to onsets")
@@ -487,12 +480,13 @@ def cmd_phase2(args) -> None:
     if wanted - {"jp", "romaji"}:
         raise SystemExit("--tracks accepts jp and/or romaji")
     if "jp" in wanted:
-        out_jp = outdir / f"{proj.name}.kara.{'kana' if kana_only else 'jp'}.ass"
-        ass.write(out_jp, jp_events, [ass.STYLE_JP], project=proj.root.resolve())
+        out_jp = base.parent / (
+            base.name + (".kara.kana.ass" if kana_only else ".kara.jp.ass"))
+        ass.write(out_jp, jp_events, [ass.STYLE_JP], project=base.resolve())
         log(f"wrote {out_jp}")
     if "romaji" in wanted:
-        out_ro = outdir / f"{proj.name}.kara.romaji.ass"
-        ass.write(out_ro, ro_events, [ass.STYLE_RO], project=proj.root.resolve())
+        out_ro = base.parent / (base.name + ".kara.romaji.ass")
+        ass.write(out_ro, ro_events, [ass.STYLE_RO], project=base.resolve())
         log(f"wrote {out_ro}")
 
     mismatched = [i for i, (j, r) in enumerate(zip(jp_events, ro_events))
@@ -511,15 +505,16 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="aksal", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("--work", type=Path, default=Path("work"),
-                   help="state directory (default: ./work)")
-    p.add_argument("--out", type=Path, default=None,
-                   help="output directory (default: ./out for phase1, and "
-                        "alongside the lines file for phase2)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     p1 = sub.add_parser("phase1", help="produce timed lines for you to correct")
     p1.add_argument("--video", required=True, type=Path)
+    p1.add_argument("-o", "--out", type=Path, default=None,
+                    help="where to write the lines file, e.g. "
+                         "D:/karaoke/OP01.lines.ass. Everything else -- lyrics, "
+                         "readings, state and caches -- is written beside it "
+                         "sharing that stem. Default: the video's name in the "
+                         "current directory.")
     p1.add_argument("--lyrics", required=True,
                     help="a local file, a Uta-Net song URL, or a search term "
                          "for LRCLIB. Whatever the source, the text is cached "
@@ -551,7 +546,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="script of the lyrics file (default: auto-detect). "
                          "Romaji is parsed straight to kana, skipping the "
                          "morphological analyser entirely.")
-    p1.add_argument("--name", help="project name (default: video stem)")
     p1.add_argument("--lead-in", type=float, default=0.0,
                     help="shift every cue earlier by N seconds")
     p1.set_defaults(func=cmd_phase1)
@@ -574,10 +568,9 @@ def build_parser() -> argparse.ArgumentParser:
     p2.add_argument("--reference", type=Path,
                     help="with --video: align against this clean track instead "
                          "of the video's own audio (better, needs the song)")
-    p2.add_argument("--name", help="project name for a standalone run")
     p2.add_argument("--project", type=Path,
-                    help="override the work/<name> directory; normally found "
-                         "from the lines file automatically")
+                    help="override the stem whose state file to use; normally "
+                         "found from the lines file automatically")
     p2.add_argument("--snap", action="store_true", default=True,
                     help="snap mora starts to energy onsets (default: on)")
     p2.add_argument("--no-snap", dest="snap", action="store_false")

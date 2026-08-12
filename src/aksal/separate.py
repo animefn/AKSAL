@@ -21,25 +21,49 @@ def vocals_path(outdir: Path, source: Path) -> Path:
     return outdir / MODEL / source.stem / "vocals.wav"
 
 
-def separate(source: Path, outdir: Path, device: str = "cpu",
+def separate(source: Path, target: Path, device: str = "cpu",
              force: bool = False, log=print) -> Path:
-    """Return a path to the isolated vocal stem, running demucs if needed."""
-    target = vocals_path(outdir, source)
+    """Isolate vocals to `target`, running demucs if it is not already there.
+
+    demucs insists on writing a nested <model>/<stem>/vocals.wav tree, so the
+    result is moved to the flat sibling path the rest of the tool uses and the
+    tree is removed. Nothing is left behind for the user to find later.
+    """
+    import shutil
+    import tempfile
+
     if target.exists() and not force:
         log(f"  using cached stem: {target.name}")
         return target
 
-    outdir.mkdir(parents=True, exist_ok=True)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    outdir = Path(tempfile.mkdtemp(prefix=".aksal-demucs-",
+                                   dir=str(target.parent)))
     cmd = [sys.executable, "-m", "demucs", "-n", MODEL, "--two-stems=vocals",
            "-d", device, "-o", str(outdir), str(source)]
     log(f"  separating vocals ({MODEL}, {device}) -- this is the slow step")
-    proc = subprocess.run(cmd)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            "demucs failed. It is a hard dependency of this tool; if it will "
-            "not install on your Python version, create a 3.11 environment "
-            "(see README). To proceed without it for one run, pass "
-            "--no-preprocess.")
-    if not target.exists():
-        raise RuntimeError(f"demucs finished but {target} is missing")
+    try:
+        proc = subprocess.run(cmd)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "demucs failed. It is a hard dependency of this tool; if it "
+                "will not install on your Python version, create a 3.11 "
+                "environment (see README). To proceed without it for one run, "
+                "pass --no-preprocess.")
+
+        produced = vocals_path(outdir, source)
+        if not produced.exists():
+            # Fall back to a search: demucs has moved this path around between
+            # versions, and failing here would waste the minutes just spent.
+            found = sorted(outdir.rglob("vocals.wav"))
+            if not found:
+                raise RuntimeError(
+                    f"demucs finished but produced no vocals.wav under {outdir}")
+            produced = found[0]
+
+        shutil.move(str(produced), str(target))
+    finally:
+        shutil.rmtree(outdir, ignore_errors=True)
+
+    log(f"  vocal stem: {target.name}")
     return target
