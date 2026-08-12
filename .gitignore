@@ -1,0 +1,53 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Private working notes
+dev-notes.md
+
+# Project state and output -- contains cached emissions, separated stems,
+# lyrics and generated karaoke. None of it belongs in the repo.
+work/
+out/
+*.pt
+*.onnx
+
+# Media, lyrics and subtitles must never be committed
+*.mkv
+*.mp4
+*.webm
+*.avi
+*.wav
+*.flac
+*.mp3
+*.m4a
+*.mka
+*.srt
+*.ass
+*.ssa
+*.vtt
+*.tsv
+*.log

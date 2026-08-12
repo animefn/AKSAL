@@ -1,0 +1,137 @@
+"""Surface text -> kana reading.
+
+A morphological analyser gets most lines right, but song lyrics are exactly
+where analysers fail: ateji, coined readings, furigana that contradicts the
+kanji, and digits. So readings live in an editable override table keyed by
+SURFACE TEXT, not by line number -- that way a correction survives you
+splitting, merging or reordering lines between phases.
+"""
+from __future__ import annotations
+
+import re
+import unicodedata
+from pathlib import Path
+
+import jaconv
+
+DIGITS = re.compile(r"[0-9０-９]")
+LATIN = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]")
+KANJI = re.compile(r"[一-鿿]")
+KANA_ONLY = re.compile(r"^[ぁ-ゖー\s]*$")
+
+_TAGGER = None
+
+
+def tagger():
+    global _TAGGER
+    if _TAGGER is None:
+        import fugashi
+
+        _TAGGER = fugashi.Tagger()
+    return _TAGGER
+
+
+def normalise_surface(line: str) -> str:
+    """Full-width spaces are phrase separators in lyric sheets, not characters."""
+    return line.replace("　", " ").strip()
+
+
+def analyse(text: str) -> str:
+    """Best-effort kana reading for one line, as hiragana."""
+    out: list[str] = []
+    for word in tagger()(text.replace(" ", "")):
+        feat = word.feature
+        kana = (getattr(feat, "kana", None)
+                or getattr(feat, "pron", None)
+                or getattr(feat, "kanaBase", None))
+        if kana in (None, "*", ""):
+            kana = word.surface
+        out.append(jaconv.kata2hira(kana))
+    return "".join(out)
+
+
+def flags_for(surface: str, reading: str, source: str = "jp") -> str:
+    """Flag rows a human should look at. Kept quiet on purpose -- a flag on
+    every line is the same as no flags at all."""
+    reasons = []
+    if DIGITS.search(surface):
+        reasons.append("digits")
+    # Latin text is an anomaly in a Japanese sheet, but it is the whole point
+    # of a romaji one.
+    if source != "romaji" and LATIN.search(surface):
+        reasons.append("latin")
+    if KANJI.search(reading):
+        reasons.append("unresolved-kanji")
+    if source == "romaji" and "'" not in surface:
+        # n + vowel is the one genuinely ambiguous romaji construction: "kani"
+        # could be か-に or か-ん-い, and only an apostrophe disambiguates it.
+        if re.search(r"n[aiueo]", surface.lower()):
+            reasons.append("n-vowel-ambiguous")
+    return ",".join(reasons)
+
+
+def load_overrides(path: Path) -> dict[str, str]:
+    """Read the editable TSV into {surface: reading}."""
+    if not path.exists():
+        return {}
+    out: dict[str, str] = {}
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip() or raw.startswith("#"):
+            continue
+        parts = raw.split("\t")
+        if len(parts) >= 4 and parts[3].strip():
+            out[parts[2].strip()] = unicodedata.normalize(
+                "NFKC", parts[3]).strip()
+    return out
+
+
+def resolve(surface: str, overrides: dict[str, str],
+            source: str = "jp") -> str:
+    """Reading for one line: a manual override if present, else derived.
+
+    With `source="romaji"` there is no morphological analysis to do -- romaji
+    already IS the reading, so it is parsed straight back to kana. That skips
+    the single largest error source in the Japanese path (the analyser guessing
+    a reading the singer does not use).
+    """
+    key = normalise_surface(surface)
+    if key in overrides:
+        return overrides[key]
+    if source == "romaji":
+        from . import romaji
+
+        return romaji.to_kana(key)
+    return analyse(key)
+
+
+def write_table(path: Path, rows: list[tuple[int, str, str, str]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="\n") as f:
+        f.write("# line\tflag\tsurface\treading\n")
+        f.write("# Fix the `reading` column wherever the flag column is set, and\n")
+        f.write("# anywhere the analyser guessed a reading the singer does not use.\n")
+        f.write("# Readings must be hiragana. Rows are matched by SURFACE text,\n")
+        f.write("# so you may reorder or renumber freely.\n")
+        for n, flag, surface, reading in rows:
+            f.write(f"{n}\t{flag}\t{surface}\t{reading}\n")
+
+
+def detect_source(lyrics: Path) -> str:
+    """'romaji' if the sheet is predominantly latin script, else 'jp'."""
+    from . import romaji
+
+    return "romaji" if romaji.looks_like_romaji(
+        lyrics.read_text(encoding="utf-8")) else "jp"
+
+
+def from_lyrics(lyrics: Path, overrides: dict[str, str] | None = None,
+                source: str = "jp") -> list[tuple[int, str, str]]:
+    """Parse a lyrics file into [(line_no, surface, reading)], skipping blanks."""
+    overrides = overrides or {}
+    rows: list[tuple[int, str, str]] = []
+    for i, raw in enumerate(lyrics.read_text(encoding="utf-8").splitlines(), 1):
+        surface = normalise_surface(raw)
+        if not surface:
+            continue
+        rows.append((i, surface, resolve(surface, overrides, source)))
+    return rows

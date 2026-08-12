@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aksal"
+version = "0.1.0"
+description = "AFN Karaoke Syllable Aligner for Lyrics: two-phase karaoke timing from a song and its lyrics"
+requires-python = ">=3.10"
+readme = "README.md"
+keywords = ["karaoke", "subtitles", "anime", "fansub", "forced-alignment", "romaji", "japanese"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Topic :: Text Processing :: Linguistic",
+]
+dependencies = [
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+    "torch>=2.2",
+    "torchaudio>=2.2",
+    "transformers>=4.40",
+    "fugashi>=1.3",
+    "unidic-lite>=1.0.8",
+    "jaconv>=0.3",
+    "demucs>=4.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/animefn/AKSAL"
+Repository = "https://github.com/animefn/AKSAL"
+Issues = "https://github.com/animefn/AKSAL/issues"
+
+[project.scripts]
+aksal = "aksal.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
