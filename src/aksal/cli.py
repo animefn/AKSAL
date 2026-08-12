@@ -17,6 +17,7 @@ from pathlib import Path
 
 from . import align as A
 from . import ass, locate, lyrics as lyrics_mod, moras, readings, romaji, separate
+from . import timing
 from . import audio as audio_mod
 from .audio import envelope, prepare
 from . import project as project_mod
@@ -88,6 +89,7 @@ def cmd_phase1(args) -> None:
                 "no match between reference and video.\n"
                 "  - is the reference this show's song?\n"
                 "  - widen with --search 0:00-10:00, or pass --song-start.")
+        segments = locate.validate(segments, log=log)
         total = sum(s.ep_end - s.ep_start for s in segments)
         log(f"\n  {len(segments)} chunk(s), {total:.1f}s of song in the video:")
         for s in segments:
@@ -215,12 +217,19 @@ def cmd_phase1(args) -> None:
             romaji_of[line_no] = "".join(romaji.line_spaced(units, owner))
         log(f"  romaji hints on {len(romaji_of)} line(s)")
 
-    events, cut = [], []
+    events, cut, straddled = [], [], []
     for grp in groups:
         placed = [c for c in grp if c["start"] is not None
                   and proj.to_video(c["start"]) is not None]
         if not placed:
             cut.append(grp[0]["line"])
+            continue
+        # A line whose ends sit in different retained chunks has middle
+        # syllables that are not in the video at all. Mapping each end
+        # independently yields a short, plausible-looking subtitle covering
+        # words never broadcast, which is worse than dropping it.
+        if proj.spans_cut(placed[0]["start"], placed[-1]["start"]):
+            straddled.append(grp[0]["line"])
             continue
         start = proj.to_video(placed[0]["start"])
         seg = next(s for s in proj.segments if s.contains_ref(placed[0]["start"]))
@@ -395,10 +404,21 @@ def cmd_phase2(args) -> None:
         log(f"  lyric script: {proj.lyrics_source}")
 
     log("\nalignment")
+    # Structure came from the reference; timing comes from wherever the caller
+    # says. Defaulting to the video means syllable durations are measured on
+    # what was actually broadcast, so a separately mixed TV size or a cross-fade
+    # at a splice join cannot carry a wrong duration across.
+    if args.time_against == "video":
+        first = min(e.start for e in events)
+        last = max(e.end for e in events)
+        src = timing.from_video(proj, first, last)
+    else:
+        src = timing.from_reference(proj)
+    log(f"  timing against {src.describe()}")
+
     aligner = A.Aligner(proj.model or A.DEFAULT_MODEL, log=log)
-    y = prepare(proj.align_audio, proj.audio_start, proj.audio_dur,
-                condition=proj.conditioned)
-    lp = aligner.emissions(y, cache=proj.emissions_cache)
+    y = prepare(src.audio, src.start, src.dur, condition=src.conditioned)
+    lp = aligner.emissions(y, cache=proj.sibling(f".emissions.{src.cache_tag}.pt"))
     env = envelope(y)
 
     jp_events: list[ass.Event] = []
@@ -416,8 +436,16 @@ def cmd_phase2(args) -> None:
 
         # Re-align inside the window you approved. Because the window is ground
         # truth, an error here cannot leak into any other line.
-        a = proj.clamp_to_audio(ev.start)
-        b = proj.clamp_to_audio(ev.end)
+        if src.name == "video":
+            a, b = src.to_audio(ev.start), src.to_audio(ev.end)
+        else:
+            # Clamp both ends into the SAME chunk: a window spanning a cut
+            # would slice across audio the video does not contain.
+            seg = proj.segment_at_video(ev.start) or proj.segment_at_video(ev.end)
+            a, b = proj.clamp_to_audio(ev.start), proj.clamp_to_audio(ev.end)
+            if seg is not None:
+                a = min(max(a, seg.ref_start), seg.ref_end)
+                b = min(max(b, seg.ref_start), seg.ref_end)
         if b <= a:
             b = a + 0.5
         f0, f1 = int(a / A.SEC_PER_FRAME), int(b / A.SEC_PER_FRAME) + 1
@@ -438,12 +466,12 @@ def cmd_phase2(args) -> None:
 
         starts = [t["start"] if t["start"] is not None else a for t in timed]
 
-        # Audio time -> video time. Segment offsets are constant, so a mora that
-        # falls just outside a segment edge is placed by the same offset rather
-        # than dropped.
-        offset = next((s.offset for s in proj.segments if s.contains_ref(a)),
-                      proj.segments[0].offset if proj.segments else 0.0)
-        v_starts = [s + offset for s in starts]
+        # Audio time -> video time, through whichever source we timed against.
+        if src.name == "reference":
+            seg = proj.segment_at_ref(a)
+            if seg is not None:
+                src.offset = seg.offset
+        v_starts = [src.to_video(s) for s in starts]
 
         jp_cells = units
         ro_cells = romaji.line_spaced(units, owner)
@@ -556,6 +584,13 @@ def build_parser() -> argparse.ArgumentParser:
                     "needed. For a hand-made subtitle, add --video.")
     p2.add_argument("lines", type=Path,
                     help="corrected lines file, or any hand-made subtitle")
+    p2.add_argument("--time-against", choices=("video", "reference"),
+                    default="video",
+                    help=r"which audio decides the \k values (default: video). "
+                         "The reference chooses WHICH lines are in the cut; "
+                         "timing against the video measures what was actually "
+                         "broadcast, so a separately mixed TV size or a "
+                         "cross-fade at a splice join cannot skew durations.")
     p2.add_argument("--group", choices=("syllable", "word"), default="syllable",
                     help="one karaoke cell per syllable (default) or per word. "
                          "Word grouping gives a simpler highlight; timing is "

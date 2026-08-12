@@ -165,10 +165,22 @@ class Aligner:
     # --- alignment ------------------------------------------------------------
 
     def _align(self, lp: torch.Tensor, token_ids: list[int]):
+        import warnings
+
         from torchaudio.functional import forced_align, merge_tokens
 
         targets = torch.tensor([token_ids], dtype=torch.int32)
-        labels, scores = forced_align(lp.unsqueeze(0), targets, blank=self.blank)
+        with warnings.catch_warnings():
+            # torchaudio 2.8 warns that forced_align is removed in 2.9. That
+            # removal was CANCELLED: pytorch/audio#3902 records that lfilter,
+            # RNNTLoss, CUCT, forced_align and overdrive were preserved after
+            # user feedback, and it is present and undeprecated in 2.10+.
+            # The warning is stale, so it is silenced rather than migrated away
+            # from. Scoped by text, so a genuine future deprecation still shows.
+            warnings.filterwarnings("ignore", message=".*forced_align.*",
+                                    category=UserWarning)
+            labels, scores = forced_align(lp.unsqueeze(0), targets,
+                                          blank=self.blank)
         return merge_tokens(labels[0], scores[0], blank=self.blank)
 
     def align_units(self, lp: torch.Tensor, units: list[str],

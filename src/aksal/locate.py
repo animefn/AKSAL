@@ -59,6 +59,50 @@ class Segment:
         return asdict(self)
 
 
+class SpliceError(ValueError):
+    """A splice map that later stages cannot express."""
+
+
+def validate(segments: list[Segment], min_support: int = 200,
+             log=print) -> list[Segment]:
+    """Reject or flag splice maps that downstream stages cannot honour.
+
+    Cheap to check here and expensive to debug later: a degenerate chunk turns
+    into an empty audio slice deep inside phase 2, where the symptom is an
+    unhelpful shape error rather than "this edit is not a plain splice".
+    """
+    if not segments:
+        return segments
+
+    for s in segments:
+        if s.ref_end <= s.ref_start or s.ep_end <= s.ep_start:
+            raise SpliceError(
+                f"zero or negative length chunk: song {s.ref_start}-{s.ref_end} "
+                f"-> video {s.ep_start}-{s.ep_end}")
+
+    ordered = sorted(segments, key=lambda s: s.ep_start)
+    for a, b in zip(ordered, ordered[1:]):
+        if b.ep_start < a.ep_end - 1e-6:
+            raise SpliceError(
+                f"chunks overlap in video time: {a.ep_start}-{a.ep_end} and "
+                f"{b.ep_start}-{b.ep_end}")
+        if b.ref_start < a.ref_start:
+            # Video order and song order disagree: the edit reordered material.
+            # Nothing downstream assumes that, so refuse rather than emit
+            # subtitles that run backwards through the lyrics.
+            raise SpliceError(
+                "this edit reorders the song (a later video chunk maps to an "
+                "earlier part of the track); AKSAL cannot express that")
+
+    weak = [s for s in segments if 0 < s.support < min_support]
+    if weak:
+        log(f"  WARNING: {len(weak)} chunk(s) matched weakly "
+            f"(support < {min_support}). A TV size that was separately mixed "
+            "rather than cut from the same master will match poorly, and its "
+            "syllable timing will not transfer.")
+    return ordered
+
+
 def identity_segment(start: float, end: float) -> Segment:
     """Mode B: the 'reference' IS the video audio, so the mapping is identity."""
     return Segment(ref_start=start, ref_end=end, ep_start=start, ep_end=end,

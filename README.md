@@ -71,18 +71,19 @@ warns if they ever diverge.
 
 Requires **Python 3.10+**, plus `ffmpeg` and `ffprobe` on `PATH`.
 
-`demucs` is a hard dependency and lags behind new Python releases, so it dictates
-your interpreter version. Use a dedicated environment:
-
 ```bash
-conda create -n aksal python=3.11 -y
-conda activate aksal
 git clone https://github.com/animefn/AKSAL.git
 cd AKSAL
 pip install -e .
 ```
 
-The acoustic model downloads from Hugging Face on first run and is cached.
+Verified on Python 3.13, including `demucs` 4.1.0. An earlier note here claimed
+demucs forced a 3.11 environment; that turned out not to be true when actually
+tried, and is left recorded because the claim had been repeated.
+
+The acoustic model downloads from Hugging Face on first run and is cached, and is
+shared across every song. Everything else a run produces is per-song and lives
+beside your output.
 
 ---
 

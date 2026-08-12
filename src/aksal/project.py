@@ -111,6 +111,30 @@ class Project:
         raw = "" if self.conditioned else ".raw"
         return self.sibling(f".emissions{span}{raw}.pt")
 
+    # --- segment lookup ------------------------------------------------------
+    def segment_at_ref(self, t: float) -> Segment | None:
+        for s in self.segments:
+            if s.contains_ref(t):
+                return s
+        return None
+
+    def segment_at_video(self, t: float) -> Segment | None:
+        for s in self.segments:
+            if s.contains_ep(t):
+                return s
+        return None
+
+    def spans_cut(self, a: float, b: float) -> bool:
+        """True if reference times `a` and `b` sit in different retained chunks.
+
+        A lyric line spanning a cut has middle syllables that are simply not in
+        the video. Mapping its ends independently produces a short, plausible
+        looking subtitle covering words that were never broadcast -- which is
+        worse than dropping it, because nothing looks wrong.
+        """
+        sa, sb = self.segment_at_ref(a), self.segment_at_ref(b)
+        return sa is not None and sb is not None and sa is not sb
+
     # --- time mapping --------------------------------------------------------
     def to_video(self, t: float) -> float | None:
         """Align-audio time -> video time."""
