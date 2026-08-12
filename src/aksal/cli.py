@@ -63,6 +63,7 @@ def cmd_phase1(args) -> None:
     args.out.mkdir(parents=True, exist_ok=True)
 
     mode = "reference" if args.reference else "video"
+    window: tuple[float, float] | None = None   # slice of source to decode
     log(f"project : {name}")
     log(f"mode    : {mode}")
 
@@ -107,7 +108,15 @@ def cmd_phase1(args) -> None:
                 "  mpv beats a scan that may be confidently wrong. For an ED,\n"
                 "  the same flag works -- it is just a later timestamp.")
         end = start + args.duration
-        segments = [locate.identity_segment(start, end)]
+        # Decode ONLY this window. Forced alignment has no skip state, so it
+        # forces every lyric into whatever audio it is handed -- give it the
+        # whole episode and the lyrics get smeared across all 24 minutes.
+        # The aligner's t=0 is therefore the window start, which is exactly the
+        # offset back to video time.
+        segments = [locate.Segment(ref_start=0.0, ref_end=round(end - start, 3),
+                                   ep_start=round(start, 3), ep_end=round(end, 3),
+                                   offset=round(start, 3))]
+        window = (start, end - start)
         log(f"\nsong window: {start:.2f}s .. {end:.2f}s (video timeline)")
 
     # --- 2. audio preprocessing ----------------------------------------------
@@ -117,6 +126,11 @@ def cmd_phase1(args) -> None:
         align_source = source
     else:
         log("\nisolating vocals")
+        if window is not None:
+            # demucs needs a file, so cut the window out first rather than
+            # separating a whole episode to use 80 seconds of it.
+            source = audio_mod.extract_wav(source, root / "window.wav", *window)
+            window = None
         align_source = separate.separate(source, root / "stems",
                                          device=args.device, log=log)
 
@@ -130,7 +144,7 @@ def cmd_phase1(args) -> None:
                    mode=mode, align_audio=align_source,
                    reference=args.reference, segments=segments,
                    model=args.model, conditioned=not args.no_preprocess)
-    proj.audio_start = proj.audio_dur = None
+    proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
     # --- 3. readings ---------------------------------------------------------
@@ -153,7 +167,8 @@ def cmd_phase1(args) -> None:
     # --- 4. align ------------------------------------------------------------
     log("\nalignment")
     aligner = A.Aligner(args.model, log=log)
-    y = prepare(align_source)
+    y = prepare(align_source, proj.audio_start, proj.audio_dur,
+                condition=proj.conditioned)
     lp = aligner.emissions(y, cache=proj.emissions_cache)
     log(f"  emissions: {tuple(lp.shape)}")
 
