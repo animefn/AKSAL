@@ -42,11 +42,38 @@ VOWEL_OF = {
 
 class Aligner:
     def __init__(self, model_name: str = DEFAULT_MODEL, log=print):
-        from transformers import Wav2Vec2ForCTC, Wav2Vec2Processor
+        import warnings
+
+        from transformers import (Wav2Vec2Config, Wav2Vec2ForCTC,
+                                  Wav2Vec2Processor)
+        from transformers.configuration_utils import PretrainedConfig
 
         log(f"  loading acoustic model: {model_name}")
-        self.processor = Wav2Vec2Processor.from_pretrained(model_name)
-        self.model = Wav2Vec2ForCTC.from_pretrained(model_name)
+
+        # Many published wav2vec2 checkpoints were uploaded years ago with
+        # `gradient_checkpointing` baked into config.json. It is a *training*
+        # memory/compute tradeoff -- activations are recomputed on the backward
+        # pass, and we never run one -- so it is inert here. transformers still
+        # warns on every load and drops support in v5.
+        #
+        # Two things are needed, because they have different causes:
+        #  * the MODEL is built from a config we clean first, which is the real
+        #    fix and is what keeps this working under v5. Verified to leave the
+        #    weights bit-identical.
+        #  * the PROCESSOR reads config.json itself and gives no way to pass a
+        #    cleaned one, so that message alone is filtered. Scoped to this
+        #    text, so unrelated warnings still surface.
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore", message=".*gradient_checkpointing.*",
+                category=UserWarning)
+            self.processor = Wav2Vec2Processor.from_pretrained(model_name)
+
+            cfg_dict, _ = PretrainedConfig.get_config_dict(model_name)
+            cfg_dict.pop("gradient_checkpointing", None)
+            config = Wav2Vec2Config(**cfg_dict)
+            self.model = Wav2Vec2ForCTC.from_pretrained(model_name,
+                                                        config=config)
         self.model.eval()
         self.vocab: dict[str, int] = self.processor.tokenizer.get_vocab()
         self.log = log
