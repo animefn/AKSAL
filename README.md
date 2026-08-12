@@ -3,7 +3,7 @@
 **AFN Karaoke Syllable Aligner for Lyrics**
 
 Turns a song and its lyrics into syllable-timed karaoke. Works on openings,
-endings and insert songs alike — nothing in it assumes an OP.
+endings and insert songs alike.
 
 ```bash
 aksal phase1 --name OP01 --video EP01.mkv --lyrics lyrics.txt --reference song.flac

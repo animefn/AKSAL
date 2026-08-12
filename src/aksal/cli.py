@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 
 from . import align as A
-from . import ass, locate, moras, readings, romaji, separate
+from . import ass, locate, lyrics as lyrics_mod, moras, readings, romaji, separate
 from . import audio as audio_mod
 from .audio import envelope, prepare
 from .project import Project
@@ -120,7 +120,13 @@ def cmd_phase1(args) -> None:
         align_source = separate.separate(source, root / "stems",
                                          device=args.device, log=log)
 
-    proj = Project(name=name, root=root, video=video, lyrics=args.lyrics,
+    log("\nlyrics")
+    lyrics_file = root / "lyrics.txt"
+    resolved = lyrics_mod.resolve(args.lyrics, cache=lyrics_file,
+                                  refresh=args.refresh_lyrics, log=log)
+    log(resolved.describe())
+
+    proj = Project(name=name, root=root, video=video, lyrics=lyrics_file,
                    mode=mode, align_audio=align_source,
                    reference=args.reference, segments=segments,
                    model=args.model, conditioned=not args.no_preprocess)
@@ -131,7 +137,7 @@ def cmd_phase1(args) -> None:
     log("\nreadings")
     source = args.lyrics_format
     if source == "auto":
-        source = readings.detect_source(args.lyrics)
+        source = readings.detect_source(lyrics_file)
         log(f"  detected lyric script: {source}")
     proj.lyrics_source = source
     proj.save()
@@ -141,7 +147,7 @@ def cmd_phase1(args) -> None:
     overrides = readings.load_overrides(proj.readings_tsv)
     if overrides:
         log(f"  {len(overrides)} manual override(s) carried over")
-    rows = readings.from_lyrics(args.lyrics, overrides, source)
+    rows = readings.from_lyrics(lyrics_file, overrides, source)
     log(f"  {len(rows)} lyric lines")
 
     # --- 4. align ------------------------------------------------------------
@@ -469,7 +475,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     p1 = sub.add_parser("phase1", help="produce timed lines for you to correct")
     p1.add_argument("--video", required=True, type=Path)
-    p1.add_argument("--lyrics", required=True, type=Path)
+    p1.add_argument("--lyrics", required=True,
+                    help="a local file, a Uta-Net song URL, or a search term "
+                         "for LRCLIB. Whatever the source, the text is cached "
+                         "into the project so you can correct it by hand.")
+    p1.add_argument("--refresh-lyrics", action="store_true",
+                    help="re-fetch even if the project already has a cached copy")
     p1.add_argument("--reference", type=Path,
                     help="full-length official track. With it, the song is "
                          "located automatically and alignment runs on clean "
