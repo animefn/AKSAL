@@ -399,8 +399,8 @@ def cmd_phase2(args) -> None:
         surface = ev.plain
         if not surface:
             continue
-        reading = readings.resolve(surface, overrides, proj.lyrics_source)
-        units = moras.split(reading)
+        words = readings.resolve_words(surface, overrides, proj.lyrics_source)
+        units, owner = moras.split_words(words)
         if not units:
             continue
 
@@ -435,14 +435,28 @@ def cmd_phase2(args) -> None:
                       proj.segments[0].offset if proj.segments else 0.0)
         v_starts = [s + offset for s in starts]
 
+        jp_cells = units
+        ro_cells = romaji.line_spaced(units, owner)
+        cell_starts = v_starts
+
+        if args.group == "word":
+            # One cell per word: keep each word's FIRST start, so the highlight
+            # still lands on the syllable that begins it.
+            spans = moras.group_by_word(owner)
+            jp_cells = ["".join(units[a:b + 1]) for a, b in spans]
+            ro_cells = ["".join(romaji.line(units[a:b + 1]))
+                        + (" " if b + 1 < len(units) else "")
+                        for a, b in spans]
+            cell_starts = [v_starts[a] for a, _ in spans]
+
         # Both tracks tile from ONE list of boundaries, so their splits match by
         # construction rather than by coincidence.
         jp_events.append(ass.Event(
             start=ev.start, end=ev.end, style="KARA-JP",
-            text=ass.karaoke_text(units, v_starts, ev.start, ev.end)))
+            text=ass.karaoke_text(jp_cells, cell_starts, ev.start, ev.end)))
         ro_events.append(ass.Event(
             start=ev.start, end=ev.end, style="KARA-RO",
-            text=ass.karaoke_text(romaji.line(units), v_starts, ev.start, ev.end)))
+            text=ass.karaoke_text(ro_cells, cell_starts, ev.start, ev.end)))
 
     # From a romaji sheet the "JP" track is reconstructed kana, not the original
     # orthography -- there is no kanji to recover -- so name it honestly.
@@ -526,6 +540,10 @@ def build_parser() -> argparse.ArgumentParser:
                     "needed. For a hand-made subtitle, add --video.")
     p2.add_argument("lines", type=Path,
                     help="corrected lines file, or any hand-made subtitle")
+    p2.add_argument("--group", choices=("syllable", "word"), default="syllable",
+                    help="one karaoke cell per syllable (default) or per word. "
+                         "Word grouping gives a simpler highlight; timing is "
+                         "identical either way.")
     p2.add_argument("--tracks", default="jp,romaji",
                     help="which karaoke tracks to write (default: jp,romaji)")
     p2.add_argument("--video", type=Path,

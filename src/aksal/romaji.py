@@ -82,6 +82,22 @@ def line(units: list[str]) -> list[str]:
     return [unit(u) for u in units]
 
 
+def line_spaced(units: list[str], owner: list[int]) -> list[str]:
+    """Romanise with word spacing, still one output per input unit.
+
+    The space is appended to the LAST syllable of each word rather than emitted
+    as its own cell. A cell of its own would need a duration, stealing time from
+    a syllable and desynchronising the two tracks; carried inside the text it
+    costs nothing and the `\\k` values stay identical to the Japanese track.
+    """
+    out: list[str] = []
+    for i, u in enumerate(units):
+        text = unit(u)
+        ends_word = i + 1 < len(units) and owner[i + 1] != owner[i]
+        out.append(text + " " if ends_word else text)
+    return out
+
+
 # =============================================================================
 # Reverse: romaji -> kana, for aligning from a romaji-only lyric sheet.
 # =============================================================================

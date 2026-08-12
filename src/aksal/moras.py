@@ -23,6 +23,34 @@ PROLONG = set("ーｰ―‐")
 SOKUON = set("っッ")
 
 
+def split_words(words: list[str]) -> tuple[list[str], list[int]]:
+    """Split each word into units, keeping track of which word each came from.
+
+    Returns (units, owner) where owner[i] is the index of the word unit i
+    belongs to. The two tracks are still built from ONE unit list, so their
+    `\\k` splits stay identical -- word membership only changes where spaces and
+    group boundaries go, never the timing.
+    """
+    units: list[str] = []
+    owner: list[int] = []
+    for i, word in enumerate(words):
+        parts = split(word)
+        units.extend(parts)
+        owner.extend([i] * len(parts))
+    return units, owner
+
+
+def group_by_word(owner: list[int]) -> list[tuple[int, int]]:
+    """Inclusive (first, last) unit index for each word."""
+    spans: list[tuple[int, int]] = []
+    start = 0
+    for i in range(1, len(owner) + 1):
+        if i == len(owner) or owner[i] != owner[start]:
+            spans.append((start, i - 1))
+            start = i
+    return spans
+
+
 def split(kana: str) -> list[str]:
     """Split a hiragana string into mora units."""
     units: list[str] = []

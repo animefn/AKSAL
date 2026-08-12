@@ -36,18 +36,44 @@ def normalise_surface(line: str) -> str:
     return line.replace("　", " ").strip()
 
 
+def analyse_words(text: str) -> list[tuple[str, str]]:
+    """Tokenise a line into (surface, kana) pairs, one per word.
+
+    The word boundaries matter as much as the readings: romaji rendered without
+    them is one unbroken run and unreadable. The analyser already produces them,
+    so the only thing required is not to throw them away.
+
+    An explicit space in the source is treated as a hard boundary -- lyric
+    sheets use it to mark phrasing, and that intent should outrank the
+    analyser's own tokenisation.
+    """
+    out: list[tuple[str, str]] = []
+    for chunk in text.split():
+        for word in tagger()(chunk):
+            feat = word.feature
+            kana = (getattr(feat, "kana", None)
+                    or getattr(feat, "pron", None)
+                    or getattr(feat, "kanaBase", None))
+            if kana in (None, "*", ""):
+                kana = word.surface
+
+            # Particles are written one way and sung another: は->wa, へ->e,
+            # を->o. The analyser's `pron` field knows this, but it cannot be
+            # used wholesale -- it also collapses long vowels (今日 becomes
+            # キョー rather than キョウ), which would merge two sung beats into
+            # one cell. So take `pron` for exactly the particles that need it.
+            if str(getattr(feat, "pos1", "")) == "助詞":
+                pron = getattr(feat, "pron", None)
+                if pron and pron not in ("*", "") and word.surface in "はへを":
+                    kana = pron
+
+            out.append((word.surface, jaconv.kata2hira(kana)))
+    return out
+
+
 def analyse(text: str) -> str:
     """Best-effort kana reading for one line, as hiragana."""
-    out: list[str] = []
-    for word in tagger()(text.replace(" ", "")):
-        feat = word.feature
-        kana = (getattr(feat, "kana", None)
-                or getattr(feat, "pron", None)
-                or getattr(feat, "kanaBase", None))
-        if kana in (None, "*", ""):
-            kana = word.surface
-        out.append(jaconv.kata2hira(kana))
-    return "".join(out)
+    return "".join(kana for _surface, kana in analyse_words(text))
 
 
 def flags_for(surface: str, reading: str, source: str = "jp") -> str:
@@ -94,14 +120,32 @@ def resolve(surface: str, overrides: dict[str, str],
     the single largest error source in the Japanese path (the analyser guessing
     a reading the singer does not use).
     """
+    return "".join(resolve_words(surface, overrides, source))
+
+
+def resolve_words(surface: str, overrides: dict[str, str],
+                  source: str = "jp") -> list[str]:
+    """Kana for one line, split into words.
+
+    Where the boundaries come from, in order:
+
+      * A manual override -- **spaces in the reading column mark word breaks.**
+        An override without spaces is one word, which is what earlier tables
+        already meant, so existing corrections keep working unchanged.
+      * Romaji input -- the spaces are already there and are authoritative. No
+        analyser is involved at all, which makes romaji lyrics strictly better
+        than Japanese ones for this particular purpose.
+      * Otherwise the morphological analyser.
+    """
     key = normalise_surface(surface)
     if key in overrides:
-        return overrides[key]
+        parts = overrides[key].split()
+        return parts if parts else [overrides[key]]
     if source == "romaji":
         from . import romaji
 
-        return romaji.to_kana(key)
-    return analyse(key)
+        return [romaji.to_kana(w) for w in key.split() if w] or [romaji.to_kana(key)]
+    return [kana for _surface, kana in analyse_words(key)]
 
 
 def write_table(path: Path, rows: list[tuple[int, str, str, str]]) -> None:
