@@ -10,6 +10,8 @@ Style: modified Hepburn as used in fansub karaoke --
 """
 from __future__ import annotations
 
+import re
+
 # Digraphs first: lookup tries the two-character form before the single.
 TABLE: dict[str, str] = {
     "きゃ": "kya", "きゅ": "kyu", "きょ": "kyo",
@@ -80,6 +82,39 @@ def unit(mora: str) -> str:
 def line(units: list[str]) -> list[str]:
     """Romanise a whole line, unit for unit -- same length in, same length out."""
     return [unit(u) for u in units]
+
+
+# --- annotation for the phase 1 lines file ------------------------------------
+#
+# The tool is for karaoke timers, who often cannot read Japanese. Phase 1's job
+# is to hand back lines you correct in Aegisub -- which is impossible if you
+# cannot tell which line is which. Prefixing each line with its romaji solves
+# that: Aegisub's edit box shows raw text, so the timer reads it, while nothing
+# renders on screen because players ignore unknown tag content.
+#
+# Removable with one regex that cannot damage a real override tag, since every
+# genuine ASS tag begins with a backslash.
+
+OPEN, CLOSE = "{*RO*", "*RO*}"
+ANNOTATION = re.compile(r"\{\*RO\*.*?\*RO\*\}", re.DOTALL)
+
+
+def annotate(text: str, romaji_text: str) -> str:
+    """Prefix a line with its romaji, escaped so it cannot close early."""
+    if not romaji_text:
+        return text
+    safe = (romaji_text.replace("*RO*", "*R0*")
+            .replace("{", "(").replace("}", ")"))
+    return f"{OPEN}{safe}{CLOSE}{text}"
+
+
+def strip(text: str) -> str:
+    """Remove annotations. Real override tags are untouched."""
+    return ANNOTATION.sub("", text)
+
+
+def is_annotated(text: str) -> bool:
+    return bool(ANNOTATION.search(text))
 
 
 def line_spaced(units: list[str], owner: list[int]) -> list[str]:

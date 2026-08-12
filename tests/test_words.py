@@ -142,3 +142,51 @@ def test_jp_and_romaji_cell_counts_match_in_word_mode():
     jp = ["".join(units[a:b + 1]) for a, b in spans]
     ro = ["".join(romaji.line(units[a:b + 1])) for a, b in spans]
     assert len(jp) == len(ro) == len(spans)
+
+
+# --- phase 1 romaji hints -----------------------------------------------------
+
+def test_annotation_is_invisible_when_rendered():
+    from aksal import ass
+    text = romaji.annotate("空を見る", "sora o miru")
+    assert ass.ANY_TAG.sub("", text) == "空を見る"
+
+
+def test_annotation_strips_back_to_the_original():
+    text = romaji.annotate("空を見る", "sora o miru")
+    assert romaji.strip(text) == "空を見る"
+
+
+def test_annotation_leaves_real_override_tags_alone():
+    """Every genuine ASS tag begins with a backslash, so the pattern cannot
+    match one."""
+    text = romaji.annotate(r"{\i1}空{\i0}", "sora")
+    assert romaji.strip(text) == r"{\i1}空{\i0}"
+
+
+def test_annotation_cannot_be_closed_early_by_its_own_content():
+    text = romaji.annotate("空", "a*RO*b")
+    assert romaji.strip(text) == "空"
+
+
+def test_braces_in_the_romaji_are_neutralised():
+    text = romaji.annotate("空", "a{b}c")
+    assert romaji.strip(text) == "空"
+
+
+def test_empty_romaji_leaves_the_line_untouched():
+    assert romaji.annotate("空", "") == "空"
+
+
+def test_is_annotated_detects_only_our_marker():
+    assert romaji.is_annotated(romaji.annotate("空", "sora"))
+    assert not romaji.is_annotated(r"{\pos(1,2)}空")
+
+
+def test_phase2_reads_through_an_annotation():
+    """phase 2 takes Event.plain, so an annotated phase 1 line must yield the
+    Japanese text and nothing else."""
+    from aksal import ass
+    ev = ass.Event(start=0.0, end=1.0,
+                   text=romaji.annotate("空を見る", "sora o miru"))
+    assert ev.plain == "空を見る"

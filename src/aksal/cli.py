@@ -198,6 +198,20 @@ def cmd_phase1(args) -> None:
 
     # --- 5. map to the video timeline and write ------------------------------
     surface_of = {n: s for n, s, _ in rows}
+
+    # Romaji hints for the timer. This tool is for karaoke timers, who often
+    # cannot read Japanese -- and phase 1 asks them to correct lines in Aegisub,
+    # which is impossible if you cannot tell one line from another. Aegisub's
+    # edit box shows raw text, so the hint is readable while editing, and
+    # nothing renders on screen because players ignore unknown tag content.
+    romaji_of: dict[int, str] = {}
+    if args.insert_romaji:
+        for line_no, surface, _reading in rows:
+            words = readings.resolve_words(surface, overrides, source)
+            units, owner = moras.split_words(words)
+            romaji_of[line_no] = "".join(romaji.line_spaced(units, owner))
+        log(f"  romaji hints on {len(romaji_of)} line(s)")
+
     events, cut = [], []
     for grp in groups:
         placed = [c for c in grp if c["start"] is not None
@@ -208,10 +222,12 @@ def cmd_phase1(args) -> None:
         start = proj.to_video(placed[0]["start"])
         seg = next(s for s in proj.segments if s.contains_ref(placed[0]["start"]))
         end = min(placed[-1]["end"], seg.ref_end) + seg.offset
-        events.append(ass.Event(start=start - args.lead_in,
-                                end=max(end, start + 0.4) - args.lead_in,
-                                text=surface_of[grp[0]["line"]],
-                                style="KARA-JP"))
+        line_no = grp[0]["line"]
+        events.append(ass.Event(
+            start=start - args.lead_in,
+            end=max(end, start + 0.4) - args.lead_in,
+            text=romaji.annotate(surface_of[line_no], romaji_of.get(line_no, "")),
+            style="KARA-JP"))
 
     if not events:
         raise SystemExit("nothing landed inside the song window -- check "
@@ -508,6 +524,12 @@ def build_parser() -> argparse.ArgumentParser:
                     help="a local file, a Uta-Net song URL, or a search term "
                          "for LRCLIB. Whatever the source, the text is cached "
                          "into the project so you can correct it by hand.")
+    p1.add_argument("--insert-romaji", action="store_true",
+                    help="prefix each line with its romaji as {*RO*...*RO*}. "
+                         "Invisible when rendered, but shown in Aegisub's edit "
+                         "box -- so a timer who cannot read Japanese can still "
+                         "tell the lines apart. Strip with "
+                         r"\{\*RO\*.*?\*RO\*\}")
     p1.add_argument("--refresh-lyrics", action="store_true",
                     help="re-fetch even if the project already has a cached copy")
     p1.add_argument("--reference", type=Path,
