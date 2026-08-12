@@ -190,3 +190,74 @@ def test_phase2_reads_through_an_annotation():
     ev = ass.Event(start=0.0, end=1.0,
                    text=romaji.annotate("空を見る", "sora o miru"))
     assert ev.plain == "空を見る"
+
+
+# --- inflections belong to the word they inflect ------------------------------
+
+def _romaji_of(text, overrides=None):
+    words = readings.resolve_words(text, overrides or {})
+    units, owner = moras.split_words(words)
+    return "".join(romaji.line_spaced(units, owner))
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("切り捨てて", "kirisutete"),      # verb + conjunctive particle
+    ("見上げて歩く", "miagete aruku"),  # ...but the next verb is its own word
+    ("行きます", "ikimasu"),           # verb + auxiliary
+    ("見た", "mita"),                  # verb + past auxiliary
+    ("空へ向かって走った", "sora e mukatte hashitta"),
+])
+def test_inflections_do_not_become_separate_words(text, expected):
+    """The analyser tokenises grammar, not orthography. Romanising each token as
+    its own word gives 'kirisute te'."""
+    assert _romaji_of(text) == expected
+
+
+def test_an_auxiliary_on_a_noun_stays_separate():
+    """です after a noun is its own word, unlike ます after a verb."""
+    assert _romaji_of("学生です") == "gakusei desu"
+
+
+def test_case_and_topic_particles_never_attach():
+    assert _romaji_of("母は花を買う") == "haha wa hana o kau"
+
+
+def test_explicit_spaces_still_break_words_after_merging():
+    """A space in the source is a hard boundary and must survive the merge."""
+    assert _romaji_of("見上げ て") == "miage te"
+
+
+# --- compound nouns -----------------------------------------------------------
+
+@pytest.mark.parametrize("text,expected", [
+    ("門前払い", "monzenbarai"),      # unidic-lite alone: 門 + 前払い
+    ("一切合切", "issaigassai"),      # unidic-lite alone: 一切 + 合切
+])
+def test_set_phrase_compounds_are_rejoined(text, expected):
+    """unidic-lite splits these and gets the READING wrong, not just the
+    spacing -- 門前払い would read モン + マエバライ, sounds never sung. ipadic
+    knows them as single entries."""
+    assert _romaji_of(text) == expected
+
+
+def test_a_genuine_two_noun_sequence_is_left_split():
+    """Only compounds ipadic knows as ONE entry are rejoined; ordinary noun
+    pairs keep their boundary."""
+    assert _romaji_of("存在証明") == "sonzai shoumei"
+
+
+def test_compound_repair_does_not_cross_an_explicit_space():
+    assert _romaji_of("門前 払い") == "monzen harai"
+
+
+def test_an_override_still_wins_over_the_repair():
+    """The escape hatch remains, for compounds no dictionary has."""
+    assert _romaji_of("門前払い", {"門前払い": "と わ"}) == "to wa"
+
+
+def test_compound_repair_degrades_gracefully_without_ipadic(monkeypatch):
+    """ipadic is an optional extra; absent it, we fall back to unidic-lite."""
+    monkeypatch.setattr(readings, "_IPADIC", None)
+    monkeypatch.setattr(readings, "_IPADIC_TRIED", True)
+    assert readings.compound_reading("門前払い") is None
+    assert _romaji_of("母は花を買う") == "haha wa hana o kau"

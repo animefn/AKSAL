@@ -47,10 +47,15 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
     sheets use it to mark phrasing, and that intent should outrank the
     analyser's own tokenisation.
     """
-    out: list[tuple[str, str]] = []
+    out: list[tuple[str, str, str]] = []      # (surface, kana, pos1)
+    prev_pos1 = ""
     for chunk in text.split():
+        first_in_chunk = True
+        chunk_start = len(out)
         for word in tagger()(chunk):
             feat = word.feature
+            pos1 = str(getattr(feat, "pos1", "") or "")
+            pos2 = str(getattr(feat, "pos2", "") or "")
             kana = (getattr(feat, "kana", None)
                     or getattr(feat, "pron", None)
                     or getattr(feat, "kanaBase", None))
@@ -62,13 +67,136 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
             # used wholesale -- it also collapses long vowels (今日 becomes
             # キョー rather than キョウ), which would merge two sung beats into
             # one cell. So take `pron` for exactly the particles that need it.
-            if str(getattr(feat, "pos1", "")) == "助詞":
+            if pos1 == "助詞":
                 pron = getattr(feat, "pron", None)
                 if pron and pron not in ("*", "") and word.surface in "はへを":
                     kana = pron
 
-            out.append((word.surface, jaconv.kata2hira(kana)))
+            kana = jaconv.kata2hira(kana)
+            if out and not first_in_chunk and _attaches(prev_pos1, pos1, pos2):
+                surface, prev_kana, prev_tag = out[-1]
+                out[-1] = (surface + word.surface, prev_kana + kana, prev_tag)
+            else:
+                out.append((word.surface, kana, pos1))
+            prev_pos1 = pos1
+            first_in_chunk = False
+
+        # Compounds are repaired per chunk, so an explicit space in the source
+        # still stops a merge from crossing it.
+        repaired = repair_compounds(out[chunk_start:])
+        out[chunk_start:] = repaired
+
+    return [(surface, kana) for surface, kana, _pos in out]
+
+
+_IPADIC = None
+_IPADIC_TRIED = False
+
+
+def compound_tagger():
+    """A second opinion for compound nouns, or None if ipadic is absent.
+
+    unidic-lite and ipadic disagree usefully. unidic has the better grammar --
+    its POS tags are what drive particle and inflection handling -- but its
+    lexicon splits set-phrase compounds that ipadic knows as single entries:
+
+        門前払い   unidic-lite: 門 + 前払い (モン + マエバライ)
+                  ipadic:      門前払い    (モンゼンバライ)
+
+    That is not merely a spacing difference: the READING is wrong, so the
+    aligner would hunt for sounds that were never sung. Lyrics are full of such
+    compounds, so it is worth asking.
+    """
+    global _IPADIC, _IPADIC_TRIED
+    if not _IPADIC_TRIED:
+        _IPADIC_TRIED = True
+        try:
+            import fugashi
+            import ipadic
+
+            _IPADIC = fugashi.GenericTagger(ipadic.MECAB_ARGS)
+        except Exception:               # pragma: no cover - optional extra
+            _IPADIC = None
+    return _IPADIC
+
+
+def compound_reading(surface: str) -> str | None:
+    """Kana reading if ipadic sees `surface` as exactly ONE word, else None."""
+    tagger_ = compound_tagger()
+    if tagger_ is None or not surface:
+        return None
+    try:
+        toks = list(tagger_(surface))
+    except Exception:                   # pragma: no cover
+        return None
+    if len(toks) != 1:
+        return None
+    feat = list(toks[0].feature)
+    if len(feat) < 8:
+        return None
+    reading = feat[7]
+    if not reading or reading == "*":
+        return None
+    return jaconv.kata2hira(reading)
+
+
+def repair_compounds(words: list[tuple[str, str, str]]
+                     ) -> list[tuple[str, str, str]]:
+    """Rejoin consecutive nouns that ipadic recognises as one compound.
+
+    Greedy longest-match within each run of nouns, so 門 + 前払い becomes one
+    word carrying ipadic's reading. Only runs of nouns are considered: merging
+    across a verb or particle would be wrong regardless of what any dictionary
+    says.
+    """
+    out: list[tuple[str, str, str]] = []
+    i = 0
+    while i < len(words):
+        if words[i][2] != "名詞":
+            out.append(words[i])
+            i += 1
+            continue
+
+        run_end = i
+        while run_end + 1 < len(words) and words[run_end + 1][2] == "名詞":
+            run_end += 1
+
+        while i <= run_end:
+            merged = None
+            for j in range(run_end, i, -1):          # longest first
+                surface = "".join(w[0] for w in words[i:j + 1])
+                reading = compound_reading(surface)
+                if reading is not None:
+                    merged = (surface, reading, "名詞")
+                    i = j + 1
+                    break
+            if merged is not None:
+                out.append(merged)
+            else:
+                out.append(words[i])
+                i += 1
     return out
+
+
+def _attaches(prev_pos1: str, pos1: str, pos2: str) -> bool:
+    """Should this token join the previous one into a single word?
+
+    The analyser tokenises grammar, not orthography: 切り捨てて comes back as
+    切り捨て + て, and romanising each as its own word gives "kirisute te".
+    Inflections and attached auxiliaries belong to the word they inflect.
+
+    The distinction that matters is what the auxiliary follows. ます on a verb
+    is part of it (行きます -> ikimasu); です on a noun is not (学生です ->
+    gakusei desu). Case and topic particles never attach, which is what keeps
+    は as its own "wa".
+    """
+    if pos1 == "接尾辞":                     # 〜的, 〜さ, 〜達
+        return True
+    if pos2 == "接続助詞":                   # て, で, ば, たり
+        return True
+    if pos1 == "助動詞":                     # た, ます, ない, だ
+        return prev_pos1 in ("動詞", "形容詞", "助動詞")
+    return False
 
 
 def analyse(text: str) -> str:
