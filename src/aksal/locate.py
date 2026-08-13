@@ -93,6 +93,29 @@ def validate(segments: list[Segment], min_support: int = 200,
             raise SpliceError(
                 "this edit reorders the song (a later video chunk maps to an "
                 "earlier part of the track); AKSAL cannot express that")
+        if b.ref_start < a.ref_end - 1e-6:
+            # Two video chunks claiming the SAME span of the song. Almost always
+            # a repeated chorus: the video's second chorus fingerprints just as
+            # well against the first occurrence in the track as against its own.
+            #
+            # This was checked in video time but not in song time, and the cost
+            # was invisible -- every lyric line in the overlap belongs to the
+            # earlier chunk, so the later chunk silently produces nothing at all
+            # and its lines are reported as "not present in this cut".
+            #
+            # Handing the disputed span to the earlier chunk keeps the map
+            # monotonic in both clocks, which is the invariant everything
+            # downstream relies on.
+            overlap = a.ref_end - b.ref_start
+            log(f"  note: chunks overlap by {overlap:.1f}s of song time "
+                "(a repeated section matched twice); giving the shared part to "
+                "the earlier chunk")
+            b.ref_start = round(a.ref_end, 3)
+            b.ep_start = round(b.ref_start + b.offset, 3)
+            if b.ref_end <= b.ref_start or b.ep_end <= b.ep_start:
+                raise SpliceError(
+                    "a chunk is entirely contained in another in song time; "
+                    "the splice map is ambiguous")
 
     weak = [s for s in segments if 0 < s.support < min_support]
     if weak:
@@ -212,10 +235,73 @@ def _segments(by_delta, search_offset: float) -> list[Segment]:
                 support=int(len(run)),
             ))
 
+    return _resolve_overlaps(out)
+
+
+# A chunk boundary is never exact: the two matches either side of a cut both
+# bleed a little past it, because the frames straddling the join fingerprint
+# partly as one side and partly as the other.
+MAX_TRIM_SEC = 3.0
+
+
+def _largest_free_span(lo: float, hi: float,
+                       taken: list[tuple[float, float]]
+                       ) -> tuple[float, float] | None:
+    """The longest part of [lo, hi] no already-kept chunk claims.
+
+    Subtracting the whole set at once, rather than trimming against each
+    neighbour in turn, is what handles a chunk sitting ENTIRELY inside a
+    stronger one -- which trimming one end at a time leaves untouched and still
+    overlapping, so validate() then rejects the map outright.
+    """
+    pieces = [(lo, hi)]
+    for a, b in taken:
+        nxt: list[tuple[float, float]] = []
+        for x, y in pieces:
+            if b <= x or a >= y:
+                nxt.append((x, y))
+                continue
+            if a > x:
+                nxt.append((x, min(a, y)))
+            if b < y:
+                nxt.append((max(b, x), y))
+        pieces = nxt
+    pieces = [p for p in pieces if p[1] > p[0]]
+    return max(pieces, key=lambda p: p[1] - p[0]) if pieces else None
+
+
+def _resolve_overlaps(found: list[Segment]) -> list[Segment]:
+    """Keep the strongest chunks, TRIMMING small overlaps rather than dropping.
+
+    Rejecting any chunk that overlaps a stronger one is what silently cost a
+    real 18-second chunk on a test-set OP: it grazed its neighbour's boundary by
+    1.36s, the neighbour had more support and was kept first, and the whole
+    chunk went -- after which phase 1 reported the six lyric lines inside it as
+    "not present in this cut". They had been broadcast.
+
+    A small overlap is a boundary disagreement, not a contradiction, so the
+    weaker chunk gives up the overlapping part and keeps the rest. A LARGE
+    overlap is two genuinely competing claims on the same video, and there the
+    stronger one still wins outright.
+    """
     kept: list[Segment] = []
-    for seg in sorted(out, key=lambda s: -s.support):
-        if any(seg.ep_start < k.ep_end and k.ep_start < seg.ep_end for k in kept):
+    for seg in sorted(found, key=lambda s: -s.support):
+        free = _largest_free_span(seg.ep_start, seg.ep_end,
+                                  [(k.ep_start, k.ep_end) for k in kept])
+        if free is None:
+            continue                      # wholly inside a stronger chunk
+        lo, hi = free
+        trimmed = (seg.ep_end - seg.ep_start) - (hi - lo)
+        if hi - lo < MIN_SEG_SEC or trimmed > MAX_TRIM_SEC:
             continue
+        if trimmed > 0:
+            # The song clock moves with the video clock inside a chunk, so the
+            # reference span shifts by exactly the same amount.
+            seg = Segment(
+                ref_start=round(seg.ref_start + (lo - seg.ep_start), 3),
+                ref_end=round(seg.ref_end - (seg.ep_end - hi), 3),
+                ep_start=round(lo, 3), ep_end=round(hi, 3),
+                offset=seg.offset, support=seg.support)
         kept.append(seg)
     return sorted(kept, key=lambda s: s.ep_start)
 
