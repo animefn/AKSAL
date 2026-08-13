@@ -321,6 +321,42 @@ def derive_durations(items: list[dict], max_hold: float, tail: float = 0.4,
         c["end"] = round(max(end, c["start"] + 0.02), 3)
 
 
+def trim_line_tails(groups: list[list[dict]], max_hold: float,
+                    floor: float = 0.35, factor: float = 2.5) -> int:
+    """End a line when its singing ends, not when the next line starts.
+
+    Ends are derived from the NEXT unit's onset, and for a line's final syllable
+    that next unit belongs to the following line. So a line followed by an
+    instrumental passage runs on until the cap -- and because `\\k` tiles the
+    line, that whole stretch is spent inside it and the highlight sits on the
+    last syllable for seconds.
+
+    A final syllable may be held, but in proportion to the line it belongs to: a
+    few times that line's own typical mora, not a flat two seconds regardless of
+    whether the line was sung fast or slow. The floor keeps a very fast line
+    from being clipped to nothing.
+
+    Only the last syllable is touched. Interior gaps are real musical rests and
+    are left alone.
+    """
+    trimmed = 0
+    for g in groups:
+        starts = [c["start"] for c in g if c["start"] is not None]
+        last = g[-1] if g else None
+        if last is None or len(starts) < 2:
+            continue
+        if last["start"] is None or last["end"] is None:
+            continue
+        gaps = sorted(starts[i] - starts[i - 1] for i in range(1, len(starts)))
+        median = gaps[len(gaps) // 2]
+        allowed = max(floor, min(max_hold, median * factor))
+        capped = round(last["start"] + allowed, 3)
+        if capped < last["end"] - 1e-6:
+            last["end"] = capped
+            trimmed += 1
+    return trimmed
+
+
 def fix_tail_smear(groups: list[list[dict]], max_hold: float) -> int:
     """Pull back a trailing BLOCK of units that spiked into a following rest.
 

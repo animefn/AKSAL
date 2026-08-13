@@ -475,3 +475,43 @@ def test_karaoke_text_accepts_matching_lengths():
 
     out = ass.karaoke_text(["a", "b"], [0.0, 0.5], 0.0, 1.0)
     assert out.count("\k") == 2
+
+
+# --- a line ends when its singing ends -----------------------------------------
+
+def test_a_line_tail_is_trimmed_to_its_own_pace():
+    """Ends come from the NEXT unit's onset, and for the last syllable of a line
+    that unit belongs to the following line -- so a line before an instrumental
+    ran on until the cap, and `\k` tiling spent the whole rest inside it."""
+    from aksal import align
+
+    line = [{"start": 0.0, "end": 0.2}, {"start": 0.2, "end": 0.4},
+            {"start": 0.4, "end": 8.0}]          # last one runs to the next line
+    assert align.trim_line_tails([line], max_hold=2.0) == 1
+    assert line[-1]["end"] == pytest.approx(0.9)  # 0.4 + 2.5 * 0.2
+
+
+def test_a_genuinely_held_note_is_not_clipped_below_the_floor():
+    from aksal import align
+
+    line = [{"start": 0.0, "end": 0.05}, {"start": 0.05, "end": 5.0}]
+    align.trim_line_tails([line], max_hold=2.0)
+    assert line[-1]["end"] >= 0.05 + 0.35
+
+
+def test_interior_gaps_are_left_alone():
+    """A large gap mid-line is a musical rest, not a tail."""
+    from aksal import align
+
+    line = [{"start": 0.0, "end": 3.0}, {"start": 3.0, "end": 3.2},
+            {"start": 3.2, "end": 3.4}]
+    align.trim_line_tails([line], max_hold=2.0)
+    assert line[0]["end"] == 3.0
+
+
+def test_a_line_with_one_syllable_is_untouched():
+    from aksal import align
+
+    line = [{"start": 1.0, "end": 4.0}]
+    assert align.trim_line_tails([line], max_hold=2.0) == 0
+    assert line[0]["end"] == 4.0

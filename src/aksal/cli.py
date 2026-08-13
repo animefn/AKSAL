@@ -277,8 +277,12 @@ def cmd_phase1(args) -> None:
 
     smeared = A.fix_tail_smear(groups, MAX_HOLD)
     A.derive_durations(timed, MAX_HOLD)
+    trimmed = A.trim_line_tails(groups, MAX_HOLD)
     if smeared:
         log(f"  corrected {smeared} tail-smeared character(s)")
+    if trimmed:
+        log(f"  ended {trimmed} line(s) at their last syllable rather than at "
+            "the next line")
 
     # --- 5. map to the video timeline and write ------------------------------
     surface_of = {n: s for n, s, _ in rows}
