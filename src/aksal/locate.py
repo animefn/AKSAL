@@ -235,9 +235,8 @@ def _segments(by_delta, search_offset: float) -> list[Segment]:
                 support=int(len(run)),
             ))
 
-    # Chain first (one consistent story), then trim the small boundary
-    # overlaps a cut always leaves behind.
-    return _resolve_overlaps(best_chain(out))
+    # NOT chained by default -- see best_chain, which is measured and rejected.
+    return _resolve_overlaps(out)
 
 
 # A chunk boundary is never exact: the two matches either side of a cut both
@@ -274,6 +273,16 @@ def _largest_free_span(lo: float, hi: float,
 
 def best_chain(found: list[Segment]) -> list[Segment]:
     """Pick the set of chunks that tells one consistent story.
+
+    MEASURED AND NOT USED BY DEFAULT. The reasoning below is sound and the
+    result is a more self-consistent map, but on the one opening it was built
+    for it made the output WORSE: it recovered three more lines and placed them
+    around 17s out, because reading the video's final section as the song's
+    later chorus then feeds those lines to the wrong occurrence of a repeated
+    lyric. Median syllable error went 0.87s -> 16.79s. Kept, tested and
+    available, because the failure is in how the lyric sheet's line order is
+    consumed rather than in the chaining itself -- but it does not ship on until
+    that half is solved.
 
     A splice map has to increase in BOTH clocks: later in the video means later
     in the song. Choosing chunks greedily by support does not respect that, and

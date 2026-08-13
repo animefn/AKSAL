@@ -672,12 +672,15 @@ def build_parser() -> argparse.ArgumentParser:
     def skip_cost(v):
         return None if str(v).lower() in ("none", "off") else float(v)
 
-    p1.add_argument("--skip-cost", type=skip_cost, default=-1.5,
+    p1.add_argument("--skip-cost", type=skip_cost, default=None,
                     help="log-probability of the skip state, which lets audio "
                          "between lines match nothing. Less negative skips "
                          "more freely; --skip-cost=none disables it and falls "
                          "back to plain forced alignment, which must place "
-                         "every syllable somewhere. Default: -1.5")
+                         "every syllable somewhere. Off by default: measured across the "
+                         "corpus it is a real win on two songs and a real "
+                         "regression on three. Try -1.5 when phase 1 output "
+                         "looks smeared across an instrumental.")
     p1.add_argument("--lrc-query",
                     help="override the search string used to look up LRCLIB "
                          "synced timings (default: the song title and artist)")
