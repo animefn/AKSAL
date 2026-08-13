@@ -93,7 +93,8 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
                     kana = pron
 
             kana = jaconv.kata2hira(kana)
-            if out and not first_in_chunk and _attaches(prev_pos1, pos1, pos2):
+            if out and not first_in_chunk and _attaches(prev_pos1, pos1, pos2,
+                                                       word.surface):
                 surface, prev_kana, prev_tag = out[-1]
                 out[-1] = (surface + word.surface, prev_kana + kana, prev_tag)
             else:
@@ -198,7 +199,21 @@ def repair_compounds(words: list[tuple[str, str, str]]
     return out
 
 
-def _attaches(prev_pos1: str, pos1: str, pos2: str) -> bool:
+# 接続助詞 covers two different things under one tag, and the analyser cannot
+# tell them apart for us:
+#
+#   inflectional   て で ば たり  -- part of the verb form.  切り捨て + て
+#                                    is one word, "kirisutete".
+#   clause joiners けど から ので のに し が ながら -- separate words.
+#                                    葬られる + けど is "... kedo", two words.
+#
+# So the attaching set is listed explicitly and everything else stays separate.
+# The default direction matters: a missed inflection costs one visible space,
+# while a merged clause joiner produces a run-on word that a timer has to fix.
+INFLECTIONAL_CONJUNCTIVE = {"て", "で", "ば", "たり", "だり", "ちゃ", "じゃ"}
+
+
+def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "") -> bool:
     """Should this token join the previous one into a single word?
 
     The analyser tokenises grammar, not orthography: 切り捨てて comes back as
@@ -212,8 +227,8 @@ def _attaches(prev_pos1: str, pos1: str, pos2: str) -> bool:
     """
     if pos1 == "接尾辞":                     # 〜的, 〜さ, 〜達
         return True
-    if pos2 == "接続助詞":                   # て, で, ば, たり
-        return True
+    if pos2 == "接続助詞":
+        return surface in INFLECTIONAL_CONJUNCTIVE
     if pos1 == "助動詞":                     # た, ます, ない, だ
         return prev_pos1 in ("動詞", "形容詞", "助動詞")
     return False

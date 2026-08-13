@@ -515,3 +515,32 @@ def test_a_line_with_one_syllable_is_untouched():
     line = [{"start": 1.0, "end": 4.0}]
     assert align.trim_line_tails([line], max_hold=2.0) == 0
     assert line[0]["end"] == 4.0
+
+
+# --- 接続助詞 is two different things under one tag ------------------------------
+#
+# The analyser gives て and けど the SAME tag (助詞/接続助詞), so the tag cannot
+# be used to tell them apart. て is part of the verb form; けど joins two
+# clauses and is its own word. Attaching everything with that tag produced
+# run-on words like "houmurarerukedo" in real output.
+
+@pytest.mark.parametrize("text,expected", [
+    ("切り捨てて", "kirisutete"),          # inflection: must attach
+    ("行ってしまえば", "itte shimaeba"),   # ば attaches, the rest does not
+])
+def test_an_inflectional_ending_attaches(text, expected):
+    assert _romaji_of(text) == expected
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("葬られるけど", "houmurareru kedo"),
+    ("走るから", "hashiru kara"),
+    ("見たけれど", "mita keredo"),
+    ("速いし", "hayai shi"),
+    ("進みながら", "susumi nagara"),
+])
+def test_a_clause_joiner_stays_its_own_word(text, expected):
+    """These carry the same POS tag as て, so only the surface form separates
+    them. Defaulting to 'separate' is the safer direction: a missed inflection
+    costs one visible space, a merged joiner costs a run-on word."""
+    assert _romaji_of(text) == expected
