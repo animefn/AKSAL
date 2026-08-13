@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 from aksal import timing
+from aksal import locate
 from aksal.locate import Segment, SpliceError, validate
 from aksal.project import Project
 
@@ -159,3 +160,47 @@ def test_describe_reports_the_padded_span_actually_decoded():
     text = timing.from_video(p, 40.0, 100.0, pad=2.0).describe()
     assert "38.0-102.0s" in text
     assert "video" in text
+
+
+# --- choosing between competing readings of the same chunk ---------------------
+#
+# A repeated chorus fingerprints just as well against the FIRST occurrence in the
+# track as against its own, so the strongest reading of each chunk in isolation
+# can claim the same span of the song twice and contradict itself. The map has to
+# increase in both clocks, so the fix is to pick the best CHAIN rather than the
+# best individual chunks.
+
+def test_a_contradicting_chunk_is_dropped_for_a_consistent_one():
+    """The strong early chunk plus a weaker LATER reading beats the strong
+    early chunk plus a strong reading that runs backwards through the song."""
+    early = Segment(0, 60, 0, 60, 0, support=8000)          # song 0-60
+    backwards = Segment(40, 66, 62, 88, 22, support=500)    # song 40-66: overlaps
+    later = Segment(200, 216, 62, 78, -138, support=400)    # song 200-216: clean
+    chain = locate.best_chain([early, backwards, later])
+    assert early in chain
+    assert later in chain
+    assert backwards not in chain
+
+
+def test_a_single_chunk_is_returned_unchanged():
+    only = Segment(0, 60, 10, 70, 10, support=900)
+    assert locate.best_chain([only]) == [only]
+
+
+def test_the_chain_is_monotonic_in_both_clocks():
+    segs = [Segment(0, 30, 0, 30, 0, support=1000),
+            Segment(100, 130, 40, 70, -60, support=1000),
+            Segment(50, 80, 80, 110, 30, support=900)]
+    chain = locate.best_chain(segs)
+    for a, b in zip(chain, chain[1:]):
+        assert a.ep_start <= b.ep_start
+        assert a.ref_start <= b.ref_start
+
+
+def test_coverage_is_preferred_over_chunk_count():
+    """One long confident chunk beats two short ones that exclude it."""
+    long_one = Segment(0, 80, 0, 80, 0, support=5000)
+    short_a = Segment(0, 5, 0, 5, 0, support=100)
+    short_b = Segment(90, 95, 10, 15, -80, support=100)
+    chain = locate.best_chain([long_one, short_a, short_b])
+    assert long_one in chain

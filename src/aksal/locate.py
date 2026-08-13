@@ -235,7 +235,9 @@ def _segments(by_delta, search_offset: float) -> list[Segment]:
                 support=int(len(run)),
             ))
 
-    return _resolve_overlaps(out)
+    # Chain first (one consistent story), then trim the small boundary
+    # overlaps a cut always leaves behind.
+    return _resolve_overlaps(best_chain(out))
 
 
 # A chunk boundary is never exact: the two matches either side of a cut both
@@ -268,6 +270,52 @@ def _largest_free_span(lo: float, hi: float,
         pieces = nxt
     pieces = [p for p in pieces if p[1] > p[0]]
     return max(pieces, key=lambda p: p[1] - p[0]) if pieces else None
+
+
+def best_chain(found: list[Segment]) -> list[Segment]:
+    """Pick the set of chunks that tells one consistent story.
+
+    A splice map has to increase in BOTH clocks: later in the video means later
+    in the song. Choosing chunks greedily by support does not respect that, and
+    a repeated chorus is where it breaks -- the video's second chorus
+    fingerprints just as well against the FIRST occurrence in the track, so the
+    strongest reading of each chunk in isolation can claim the same span of the
+    song twice and contradict itself.
+
+    Picking the highest-scoring chain that is monotonic in both clocks fixes
+    that at the source: a chunk whose best offset would contradict an earlier
+    chunk is free to be read at its second-best offset instead, which is usually
+    the later occurrence of the same chorus and is usually right.
+
+    Longest-increasing-subsequence by weight, O(n^2) over a handful of chunks.
+    Score is duration times support, so a long confident chunk outranks a short
+    one and coverage is preferred over chunk count.
+    """
+    if len(found) < 2:
+        return list(found)
+
+    order = sorted(found, key=lambda s: (s.ep_start, s.ref_start))
+    weight = [max(s.ep_end - s.ep_start, 0.0) * max(s.support, 1) for s in order]
+    best = list(weight)
+    prev = [-1] * len(order)
+
+    for i, seg in enumerate(order):
+        for j in range(i):
+            other = order[j]
+            # Strictly after in both clocks, allowing the small boundary
+            # overlap that a cut always produces.
+            if (other.ep_end - MAX_TRIM_SEC <= seg.ep_start
+                    and other.ref_end - MAX_TRIM_SEC <= seg.ref_start
+                    and best[j] + weight[i] > best[i]):
+                best[i] = best[j] + weight[i]
+                prev[i] = j
+
+    end = max(range(len(order)), key=lambda i: best[i])
+    chain: list[Segment] = []
+    while end != -1:
+        chain.append(order[end])
+        end = prev[end]
+    return list(reversed(chain))
 
 
 def _resolve_overlaps(found: list[Segment]) -> list[Segment]:
