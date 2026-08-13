@@ -111,3 +111,22 @@ def logspec(y: np.ndarray) -> np.ndarray:
     _, _, Z = stft(y, fs=SR, nperseg=N_FFT, noverlap=N_FFT - HOP,
                    window="hann", boundary=None, padded=False)
     return np.log1p(np.abs(Z).astype(np.float32) * 1000.0)
+
+
+def duration(path: Path) -> float | None:
+    """Length in seconds via ffprobe, or None if it cannot be determined.
+
+    Used to verify that an LRCLIB hit is the same recording as the reference
+    track. Never raises: a missing duration means "cannot verify", which the
+    caller treats as "do not use", and that is the safe direction.
+    """
+    import subprocess
+
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+        return float(out) if out else None
+    except Exception:                                   # noqa: BLE001
+        return None

@@ -116,35 +116,61 @@ next to it.
 
 ## Two input modes
 
-| | Mode A — reference | Mode B — video only |
+The choice is really about **what your lyrics file contains**, not about the
+reference track. Everything follows from that.
+
+| | Mode A — reference | Mode B — exact text |
 |---|---|---|
-| inputs | video + lyrics + full song | video + lyrics |
-| lyrics may be | the **full** version | must match the **cut** |
+| inputs | video + **full** lyrics + full song | video + lyrics of **your cut** |
+| lyrics must be | anything; cut lines drop out | exactly what the cut sings |
 | locating the song | automatic (fingerprint) | needs `--song-start` |
 | aligns against | clean studio audio | broadcast mix |
-| repeated chorus | unambiguous | ambiguous |
+| repeated chorus | can be ambiguous | unambiguous |
+| effort | point at the single | type the lines |
 
-**Mode A is strongly preferred.** With the full song you get clean audio, the
-lyrics in order, and automatic location — all three at once.
+**Both are good, and they fail differently.** Mode A costs you nothing but the
+single, and answers "which lines were broadcast" acoustically. Mode B is the
+more accurate of the two when you can supply the text — measured against
+hand-timed karaoke it puts most line onsets inside 0.2s — because every line you
+give it is genuinely sung, which is the one thing forced alignment cannot work
+out for itself.
+
+### The combination that does not work
+
+**A full lyric sheet with no reference track.** This is refused, not attempted.
+
+Forced alignment has no way to express *"this line is not sung"*: every token in
+the transcript must be consumed by some frame. Hand it the full sheet against a
+TV size and it does not fail — it distributes the surplus across the
+instrumental passages and returns a confident, monotonic, wrong path. Measured
+against hand-timed karaoke that produced median errors of 3–22 seconds, with no
+signal that anything had gone wrong.
+
+So phase 1 checks whether the lyrics can physically fit the window, at the
+fastest anyone sings, and stops with an explanation if they cannot. Pass
+`--reference`, or cut the lyrics down to what your version actually sings.
 
 ### Locating the song
-
-Tried in order:
 
 1. **`--song-start 0:36`** — always wins, costs nothing, cannot be wrong.
 2. **Chapter markers**, if the container has them.
 3. **Fingerprinting** against the reference (Mode A only). Cheap: pure numpy,
    well under a minute over a 7-minute search window.
 
-There is deliberately **no automatic fallback beyond that.** CTC cannot be used
-as a locator: forced alignment has no skip state, so given 7 minutes of audio and
-90 seconds of lyrics it will not fail — it will spread the lyrics across all 7
-minutes and return a confident, monotonic, completely wrong path. A locator that
-fails silently is worse than one that refuses. Mode B without a timestamp or
-chapters exits and names the flag to pass.
+There is deliberately **no automatic fallback beyond that**, for the same reason
+as above: CTC cannot be used as a locator. A locator that fails silently is
+worse than one that refuses.
 
 For an **ED or insert song**, `--song-start` is the whole answer — it is just a
-different timestamp.
+different timestamp. With a reference, use `--search 18:00-24:00` instead.
+
+### No official track and no time to type the lyrics?
+
+Skip phase 1. Rough-time the lines yourself in Aegisub — or reuse existing
+subtitles — and run phase 2 on them directly. Given correct line boundaries,
+phase 2 reproduces hand timing to roughly 70 ms:
+
+    aksal phase2 mylines.ass --video EPISODE.mkv
 
 ---
 
@@ -180,12 +206,19 @@ aksal phase2 D:/karaoke/OP01.lines.ass
 The lines file is phase 2's only required argument — the project is found from a
 header stamp phase 1 leaves in it, falling back to the filename.
 
-### Mode B — no reference track
+### Mode B — no reference track, exact text
+
+The lyrics file must hold **only the lines your cut sings**, in order. Nothing
+else works without a reference, and phase 1 will tell you so rather than guess.
 
 ```bash
-aksal phase1 --video EP01.mkv --lyrics lyrics.txt -o ED01.lines.ass \
+aksal phase1 --video EP01.mkv --lyrics tv-size.txt -o ED01.lines.ass \
     --song-start 21:30 --duration 90
 ```
+
+Typing the text is the whole cost, and it buys the most accurate line placement
+the tool can produce — because you have answered the one question the aligner
+cannot.
 
 ### Lyrics in romaji
 
@@ -242,9 +275,9 @@ aksal phase2 LINES [options]
 |---|---|---|
 | `--video PATH` | required | Video containing the song. |
 | `--lyrics PATH` | required | Plain-text lyrics, one line per subtitle line. Japanese or romaji, auto-detected. |
-| `--reference PATH` | — | Full-length official track. Strongly preferred. |
-| `--song-start TIME` | — | Where the song starts, e.g. `0:36`. Required in video-only mode without chapters. |
-| `--duration SEC` | `92` | Song length, video-only mode. |
+| `--reference PATH` | — | Full-length official track. Lets you use the **full** lyric sheet: cut lines drop out automatically. |
+| `--song-start TIME` | — | Where the song starts, e.g. `0:36`. Required without a reference, unless the container has chapters. |
+| `--duration SEC` | `92` | Song length. Without a reference this also bounds the lyrics: a sheet that cannot fit this window is refused. |
 | `--search START-END` | — | Restrict fingerprint search, e.g. `18:00-24:00` for an ED. |
 | `--search-window SEC` | `420` | Seconds of video to fingerprint. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
@@ -319,12 +352,17 @@ the waveform, starting with whatever phase 1 flagged.
 
 ## Limitations
 
-- **No test suite yet.** Everything is verified by hand on a small number of
-  songs. This is the top roadmap item.
-- **demucs has never been run end to end** — all measurements are raw-mix, so
-  they are a floor rather than what the defaults produce.
+- **demucs measurements are thin** — the benchmark below is raw-mix, so the
+  numbers are a floor rather than what the defaults produce.
 - **Japanese only**, by construction: the acoustic model's vocabulary is kana.
-- Mode B and merged-episode targets are lightly tested.
+- **Merged-episode targets are lightly tested.**
+- **A repeated chorus can be matched to the wrong occurrence.** Two identical
+  chorus blocks fingerprint equally well against either, and when the wrong one
+  is picked the two chunks claim the same span of the song. That is now detected
+  and resolved in favour of the earlier chunk — which keeps the map monotonic,
+  but can cost the lines in the disputed span. Watch for it in phase 1's output.
+- **TV-original content is unreachable in Mode A.** If the broadcast sings
+  something the released single does not contain, no reference can locate it.
 
 ---
 
@@ -359,22 +397,35 @@ Initial release.
 
 ## Roadmap
 
-### 1. A test suite
+### 1. The skip state
 
-The most urgent gap. There is currently none. ASRI's experience is the argument:
-its 211 synthetic tests still missed every important bug, but they made
-refactoring safe. Priority order:
+The single largest remaining win, and the root cause behind most of what phase 1
+still gets wrong.
 
-- Pure-function units first: syllable splitting, romaji, `\k` tiling, ASS I/O
-- Contract tests for the JP/Romaji split invariant
-- Synthetic end-to-end: build audio with known syllable positions and assert
-  recovery
+Forced alignment must consume every token, so a line that is not sung has
+nowhere to go and the surplus lands in the nearest instrumental passage. That is
+why a line after a long rest starts too early, why a 13-second interlude gets
+swallowed, and why a full lyric sheet cannot be used without a reference.
+
+`torchaudio.functional.forced_align` — the function already in use — supports a
+`<star>` token for exactly this: extend the emission matrix by one column and
+interleave stars between lines. A small penalty lets the path absorb rests; a
+larger one lets it decide a line is absent. No new dependency and no hand-written
+trellis.
+
+The complementary approach, for deciding *which* lines are sung: greedily decode
+the window (argmax over an emission matrix already computed, so nearly free),
+then locally align the lyric sheet against that rough hypothesis as a
+**text-to-text** problem. Skipping is free in local alignment, which is the whole
+point of it. Lines that match a region are sung; lines that match nothing were
+cut. Then force-align only the matched lines inside their matched spans. This is
+the standard anchor-based method for long audio with an imperfect transcript.
 
 ### 2. Verify what is currently assumed
 
-- **Run demucs end to end.** It is the default path and has never executed.
-- Mode B (no reference track) at more than spot-check depth
-- More songs, more artists — one OP is not a corpus
+- **Run demucs end to end across the test set.** It is the default path and
+  every published number here is `--no-preprocess`.
+- The skip state (see below) — the single largest remaining win.
 
 ### 3. Improve syllable accuracy
 
