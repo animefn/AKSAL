@@ -188,7 +188,15 @@ class Aligner:
         """Align `units` against an emission matrix; times are absolute seconds."""
         token_ids, spans, missing = self.tokenise(units)
         if not token_ids:
-            return []
+            # Nothing in this line is in the model's vocabulary -- a line sung
+            # entirely in English, say. Return a placeholder PER UNIT rather
+            # than an empty list: callers pair this result with `units`
+            # positionally, and a short list silently misaligns every cell after
+            # it or, if the line is wholly foreign, indexes off the end.
+            self.log(f"  note: nothing alignable in {''.join(units)[:40]!r}; "
+                     "spacing it evenly")
+            return [{"text": u, "start": None, "end": None, "conf": 0.0}
+                    for u in units]
         if len(token_ids) > lp.shape[0]:
             raise ValueError(
                 f"{len(token_ids)} tokens will not fit in {lp.shape[0]} frames "

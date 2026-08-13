@@ -261,3 +261,217 @@ def test_compound_repair_degrades_gracefully_without_ipadic(monkeypatch):
     monkeypatch.setattr(readings, "_IPADIC_TRIED", True)
     assert readings.compound_reading("門前払い") is None
     assert _romaji_of("母は花を買う") == "haha wa hana o kau"
+
+
+# --- the readings TSV round trip ----------------------------------------------
+#
+# Phase 1 writes the reading to a TSV; phase 2 reads that file back as an
+# OVERRIDE. So the TSV is not a report -- it is the channel the word boundaries
+# travel through, and anything the join drops there is gone from the finished
+# karaoke. Joining the words with "" once cost every space in the romaji track
+# while every unit test on the spacing functions themselves still passed.
+
+def test_the_readings_row_keeps_word_boundaries(tmp_path):
+    lyrics = tmp_path / "l.txt"
+    lyrics.write_text("母は花を買う\n", encoding="utf-8")
+    (_n, _surface, reading), = readings.from_lyrics(lyrics)
+    assert reading == "はは わ はな お かう"
+
+
+def test_a_reading_row_survives_the_tsv_round_trip(tmp_path):
+    """Write the table, read it back as overrides, and the boundaries must
+    still be there -- this is exactly what phase 2 does."""
+    lyrics = tmp_path / "l.txt"
+    lyrics.write_text("母は花を買う\n", encoding="utf-8")
+    rows = readings.from_lyrics(lyrics)
+    tsv = tmp_path / "r.tsv"
+    readings.write_table(tsv, [(n, "", s, r) for n, s, r in rows])
+
+    overrides = readings.load_overrides(tsv)
+    assert readings.resolve_words("母は花を買う", overrides) == [
+        "はは", "わ", "はな", "お", "かう"]
+
+
+def test_phase2_romaji_cells_are_spaced_after_the_round_trip(tmp_path):
+    """The end-to-end property the user sees: spaces in the karaoke track."""
+    lyrics = tmp_path / "l.txt"
+    lyrics.write_text("母は花を買う\n", encoding="utf-8")
+    rows = readings.from_lyrics(lyrics)
+    tsv = tmp_path / "r.tsv"
+    readings.write_table(tsv, [(n, "", s, r) for n, s, r in rows])
+
+    overrides = readings.load_overrides(tsv)
+    words = readings.resolve_words("母は花を買う", overrides)
+    units, owner = moras.split_words(words)
+    assert "".join(romaji.line_spaced(units, owner)) == "haha wa hana o kau"
+
+
+def test_phase1_hint_and_phase2_track_agree_on_spacing(tmp_path):
+    """Both routes to romaji must produce the SAME string.
+
+    Phase 1's `--insert-romaji` hint spaces the words before the TSV exists, so
+    it kept its spaces throughout the bug; phase 2 went through the TSV and lost
+    them. Pinning them together is what stops the two drifting apart again.
+    """
+    text = "母は花を買う"
+    lyrics = tmp_path / "l.txt"
+    lyrics.write_text(text + "\n", encoding="utf-8")
+
+    # phase 1: straight from the analyser, no TSV involved
+    u1, o1 = moras.split_words(readings.resolve_words(text, {}))
+    hint = "".join(romaji.line_spaced(u1, o1))
+
+    # phase 2: through the TSV, as an override
+    rows = readings.from_lyrics(lyrics)
+    tsv = tmp_path / "r.tsv"
+    readings.write_table(tsv, [(n, "", s, r) for n, s, r in rows])
+    u2, o2 = moras.split_words(
+        readings.resolve_words(text, readings.load_overrides(tsv)))
+    track = "".join(romaji.line_spaced(u2, o2))
+
+    assert hint == track == "haha wa hana o kau"
+
+
+def test_an_unspaced_manual_override_is_still_one_word(tmp_path):
+    """Back-compat: tables a user corrected before this change had no spaces,
+    and meant one word. They must keep meaning that."""
+    assert readings.resolve_words("門前払い", {"門前払い": "もんぜんばらい"}) == [
+        "もんぜんばらい"]
+
+
+# --- furigana -----------------------------------------------------------------
+#
+# Lyric sheets gloss coined readings as kanji + a parenthesised kana reading.
+# Kept as literal text it is not a sound anyone sings: the aligner receives the
+# kanji reading AND the gloss, and every such word comes out doubled.
+
+def test_a_furigana_gloss_replaces_the_kanji_it_glosses():
+    assert readings.strip_ruby("目醒(めざ)めよ") == "めざめよ"
+
+
+def test_a_katakana_gloss_wins_too():
+    """The interesting case: a word written in kanji but sung as a loanword.
+    Only the gloss carries that reading -- the analyser cannot invent it."""
+    assert readings.strip_ruby("冒険(スリル)を") == "スリルを"
+
+
+def test_full_width_parentheses_are_handled():
+    assert readings.strip_ruby("嘲笑（わら）われても") == "わらわれても"
+
+
+@pytest.mark.parametrize("text", [
+    "サビ(2回)くりかえし",     # a repeat marker, not a reading
+    "ah (yeah) sing",          # an aside in latin script
+    "(ここから)",              # kana in parens, but no kanji before it
+])
+def test_a_parenthetical_that_is_not_furigana_is_left_alone(text):
+    assert readings.strip_ruby(text) == text
+
+
+def test_normalise_surface_strips_ruby_so_every_caller_gets_it():
+    """Doing it here means the readings table, the alignment units and the
+    karaoke text all agree, rather than each stripping it separately."""
+    assert readings.normalise_surface("　目醒(めざ)めよ　") == "めざめよ"
+
+
+# --- the sokuon is a mora ------------------------------------------------------
+#
+# っ is one of the three special moras (特殊拍) with ん and the long-vowel mark:
+# it occupies a beat, and singers give it one. It was previously attached to the
+# following mora, which merged two beats into one cell and cost a timing point.
+# Its romaji is the doubled consonant of what FOLLOWS, so it needs lookahead --
+# which is why `romaji.line` resolves it rather than `romaji.unit`.
+
+@pytest.mark.parametrize("kana,units,cells", [
+    ("おもって", ["お", "も", "っ", "て"], ["o", "mo", "t", "te"]),
+    ("まっちゃ", ["ま", "っ", "ちゃ"], ["ma", "t", "cha"]),      # Hepburn tch
+    ("がっしゅく", ["が", "っ", "しゅ", "く"], ["ga", "s", "shu", "ku"]),
+    ("つよく", ["つ", "よ", "く"], ["tsu", "yo", "ku"]),        # never t+su
+])
+def test_sokuon_is_its_own_cell(kana, units, cells):
+    got = moras.split(kana)
+    assert got == units
+    assert romaji.line(got) == cells
+
+
+def test_a_trailing_sokuon_has_nothing_to_double():
+    r"""A glottal stop at the end of a line. The cell is left empty rather than
+    invented, and the `\k` still advances so the tracks stay aligned."""
+    units = moras.split("あっ")
+    assert units == ["あ", "っ"]
+    assert romaji.line(units) == ["a", ""]
+
+
+def test_spaced_romaji_resolves_the_sokuon_too():
+    """`line_spaced` must not romanise unit-by-unit -- that loses the lookahead
+    and silently drops every sokuon from the romaji track."""
+    words = ["おもって", "ほど"]
+    units, owner = moras.split_words(words)
+    assert "".join(romaji.line_spaced(units, owner)) == "omotte hodo"
+
+
+# --- foreign words -------------------------------------------------------------
+
+def test_a_latin_run_is_one_unit_not_one_per_letter():
+    """"everyday" became eight karaoke cells, one per letter."""
+    assert moras.split("everyday") == ["everyday"]
+    assert romaji.line(["everyday"]) == ["everyday"]
+
+
+def test_latin_inside_japanese_stays_one_unit():
+    assert moras.split("あeverydayい") == ["あ", "everyday", "い"]
+
+
+@pytest.mark.parametrize("word", ["dreamer", "light", "stop", "the", "single"])
+def test_english_words_are_recognised_as_foreign(word):
+    assert readings.is_foreign(word) is True
+
+
+def test_a_word_that_parses_as_romaji_can_still_be_foreign():
+    """"narrative" is phonotactically perfect Japanese romaji, so shape cannot
+    catch it -- only the analyser can."""
+    assert readings.is_foreign("narrative") is True
+
+
+@pytest.mark.parametrize("word", [
+    "kagayaki", "hirogetara", "hitoshirazu", "deatteita", "tsudzukete",
+])
+def test_japanese_words_are_not_called_foreign(word):
+    """Conjugated and compound forms especially: a headword-only dictionary
+    lookup calls 43% of real lyric words foreign."""
+    assert readings.is_foreign(word) is False
+
+
+def test_a_foreign_word_is_left_unsplit_in_a_romaji_sheet():
+    words = readings.resolve_words("everyday shinjitsu", {}, "romaji")
+    assert words == ["everyday", "しんじつ"]
+    units, owner = moras.split_words(words)
+    assert romaji.line_spaced(units, owner) == [
+        "everyday ", "shi", "n", "ji", "tsu"]
+
+
+def test_dzu_round_trips_to_the_right_kana():
+    """A common fansub spelling of づ that no Hepburn table produces. Without
+    it the word does not parse and gets mistaken for English."""
+    assert romaji.to_kana("tsudzukete") == "つづけて"
+
+
+# --- a line with nothing alignable in it ---------------------------------------
+
+def test_karaoke_text_refuses_a_length_mismatch():
+    """Cells and start times are paired POSITIONALLY. When the aligner returns
+    fewer entries than there are cells -- which happened as soon as foreign
+    words stopped being transliterated, because a wholly English line has no
+    kana tokens at all -- the tiling loop indexed off the end, several modules
+    away from the cause."""
+    from aksal import ass
+
+    with pytest.raises(ValueError, match="diverged"):
+        ass.karaoke_text(["a", "b", "c"], [0.0, 0.5], 0.0, 2.0)
+
+
+def test_karaoke_text_accepts_matching_lengths():
+    from aksal import ass
+
+    out = ass.karaoke_text(["a", "b"], [0.0, 0.5], 0.0, 1.0)
+    assert out.count("\k") == 2

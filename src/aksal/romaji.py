@@ -55,8 +55,37 @@ PROLONG = "ーｰ―‐"
 VOWELS = "aiueo"
 
 
+def sokuon_romaji(nxt: str | None) -> str:
+    """Romaji for a standalone っ: the doubled consonant of what follows.
+
+    っ carries no sound of its own -- it is the closure before the next
+    consonant -- so it can only be written by looking ahead. Hepburn geminates
+    ch as "tch", so まっちゃ splits ma / t / cha.
+
+    At the end of a line there is nothing to double: that is a glottal stop, and
+    the cell is left empty rather than invented. The `\\k` still advances, so the
+    two tracks stay aligned.
+    """
+    if not nxt:
+        return ""
+    r = unit(nxt)
+    if not r:
+        return ""
+    return "t" if r.startswith("ch") else r[0]
+
+
 def unit(mora: str) -> str:
-    """Romanise a single mora unit produced by moras.split()."""
+    """Romanise a single mora unit produced by moras.split().
+
+    A latin run passes through untouched -- it is already romaji, and there is
+    nothing to transliterate.
+    """
+    if mora and mora[0] in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        return mora
+    if mora == "っ":
+        # Only reachable if a caller romanises units one at a time; `line`
+        # resolves it properly with the following mora.
+        return ""
     sokuon = mora.startswith("っ")
     body = mora[1:] if sokuon else mora
 
@@ -80,8 +109,13 @@ def unit(mora: str) -> str:
 
 
 def line(units: list[str]) -> list[str]:
-    """Romanise a whole line, unit for unit -- same length in, same length out."""
-    return [unit(u) for u in units]
+    """Romanise a whole line, unit for unit -- same length in, same length out.
+
+    Driven over the list rather than mapped, because っ needs the mora after it.
+    """
+    return [sokuon_romaji(units[i + 1] if i + 1 < len(units) else None)
+            if u == "っ" else unit(u)
+            for i, u in enumerate(units)]
 
 
 # --- annotation for the phase 1 lines file ------------------------------------
@@ -125,9 +159,9 @@ def line_spaced(units: list[str], owner: list[int]) -> list[str]:
     a syllable and desynchronising the two tracks; carried inside the text it
     costs nothing and the `\\k` values stay identical to the Japanese track.
     """
+    cells = line(units)             # one source of truth for the romaji itself
     out: list[str] = []
-    for i, u in enumerate(units):
-        text = unit(u)
+    for i, text in enumerate(cells):
         ends_word = i + 1 < len(units) and owner[i + 1] != owner[i]
         out.append(text + " " if ends_word else text)
     return out
@@ -144,6 +178,10 @@ REVERSE: dict[str, str] = {}
 for _k, _r in TABLE.items():
     REVERSE.setdefault(_r, _k)
 REVERSE.update({
+    # "dzu" is a common fansub spelling of づ that no Hepburn table produces,
+    # so it never round-trips: without it, tsudzukete fails to parse as romaji
+    # at all and gets mistaken for a foreign word.
+    "dzu": "づ", "dji": "ぢ",
     "ji": "じ", "zu": "ず", "o": "お", "wo": "を", "e": "え", "wa": "わ",
     "n": "ん", "shi": "し", "chi": "ち", "tsu": "つ", "fu": "ふ",
     "ha": "は", "he": "へ", "hi": "ひ",

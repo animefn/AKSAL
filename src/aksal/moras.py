@@ -51,26 +51,43 @@ def group_by_word(owner: list[int]) -> list[tuple[int, int]]:
     return spans
 
 
+LATIN = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'’0123456789")
+
+
 def split(kana: str) -> list[str]:
-    """Split a hiragana string into mora units."""
+    """Split a hiragana string into mora units.
+
+    っ gets a unit of its own. It is a mora -- one of the three special moras
+    (特殊拍) with ん and the long-vowel mark -- so it occupies a beat, and
+    singers give it one. Its romaji is the doubled consonant of the FOLLOWING
+    mora, which is why `romaji.line` resolves it with lookahead rather than
+    `romaji.unit` doing it alone.
+
+    A run of latin characters is ONE unit. Splitting it per letter, which is
+    what falling through to the per-character path does, turns "everyday" into
+    eight karaoke cells. Where the lyric is not Japanese there is no mora
+    structure to find, and word level is the honest granularity.
+    """
     units: list[str] = []
-    pending_sokuon = False
+    latin_run = False
 
     for ch in kana:
         if ch.isspace():
+            latin_run = False
             continue
+        if ch in LATIN:
+            if latin_run:
+                units[-1] += ch
+            else:
+                units.append(ch)
+                latin_run = True
+            continue
+        latin_run = False
         if ch in SMALL_ATTACH and units:
             units[-1] += ch
             continue
         if ch in PROLONG and units:
             units[-1] += ch
             continue
-        if ch in SOKUON:
-            pending_sokuon = True
-            continue
-        units.append(("っ" if pending_sokuon else "") + ch)
-        pending_sokuon = False
-
-    if pending_sokuon:          # trailing sokuon: rare, but do not lose it
-        units.append("っ")
+        units.append("っ" if ch in SOKUON else ch)
     return units

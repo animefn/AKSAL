@@ -120,6 +120,13 @@ def karaoke_text(units: list[str], starts: list[float],
     n = len(units)
     if n == 0:
         return ""
+    if len(starts) != n:
+        # A positional pairing that has gone wrong. Left to run it either
+        # produces a line whose cells are shifted by one, or an IndexError deep
+        # in the tiling loop -- both a long way from the cause.
+        raise ValueError(
+            f"karaoke_text got {n} cell(s) but {len(starts)} start time(s); "
+            "the aligner and the cell list have diverged")
 
     s = [min(max(x, line_start), line_end) for x in starts]
     for i in range(1, n):                       # monotonic, and singable

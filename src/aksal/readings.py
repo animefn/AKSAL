@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 from pathlib import Path
 
 import jaconv
@@ -31,9 +32,28 @@ def tagger():
     return _TAGGER
 
 
+# Furigana as lyric sheets print it: kanji, then a parenthesised all-kana gloss.
+# Deliberately narrow -- it fires only when the parenthetical is entirely kana
+# AND directly follows kanji, so ordinary asides ("(2回)", "(yeah)") survive.
+RUBY = re.compile(r"[一-鿿々]+[（(]([ぁ-ゖァ-ヺー]+)[）)]")
+
+
+def strip_ruby(line: str) -> str:
+    """Replace furigana with the gloss, because the gloss is what is sung.
+
+    Sheets use this for coined readings the kanji do not carry -- a word
+    written 冒険 but sung as a loanword, say. Kept as literal text it is not a
+    note the singer sings: the aligner is handed the kanji reading AND the
+    gloss, and the karaoke comes out with every such word doubled.
+
+    The gloss wins because that is the sound. The kanji is orthography.
+    """
+    return RUBY.sub(lambda m: m.group(1), line)
+
+
 def normalise_surface(line: str) -> str:
     """Full-width spaces are phrase separators in lyric sheets, not characters."""
-    return line.replace("　", " ").strip()
+    return strip_ruby(line.replace("　", " ")).strip()
 
 
 def analyse_words(text: str) -> list[tuple[str, str]]:
@@ -239,6 +259,44 @@ def load_overrides(path: Path) -> dict[str, str]:
     return out
 
 
+def romaji_to_kana(word: str) -> str:
+    from . import romaji
+
+    return romaji.to_kana(word)
+
+
+@lru_cache(maxsize=4096)
+def is_foreign(word: str) -> bool:
+    """True if a word in a romaji sheet is not Japanese at all.
+
+    In a romaji sheet every word is latin script, so script tells you nothing --
+    "kagayaki" and "dreamer" look alike. Two tests, because each catches what
+    the other cannot:
+
+      * it does not parse as romaji at all ("light", "stop" -- `l`, `st`)
+      * it parses, but the analyser does not recognise the result ("narrative"
+        is phonotactically perfect Japanese and still an English word)
+
+    The analyser is asked about the whole word, inflection included, so
+    conjugated forms like "hirogetara" stay Japanese -- a plain dictionary
+    lookup of headwords calls 43% of real lyric words foreign.
+
+    A Japanese word missing from unidic -- a coinage, a dialect form -- comes
+    out as one un-split cell. That is visible in the phase 1 romaji hint and
+    fixable in one row of the readings table, which is what the table is for.
+    """
+    from . import romaji
+
+    kana = romaji_to_kana(word)
+    if LATIN.search(kana):
+        return True
+    try:
+        return any(t.is_unk for t in tagger()(kana))
+    except Exception:
+        # The analyser is optional to this decision, never fatal to the run.
+        return False
+
+
 def resolve(surface: str, overrides: dict[str, str],
             source: str = "jp") -> str:
     """Reading for one line: a manual override if present, else derived.
@@ -270,9 +328,10 @@ def resolve_words(surface: str, overrides: dict[str, str],
         parts = overrides[key].split()
         return parts if parts else [overrides[key]]
     if source == "romaji":
-        from . import romaji
-
-        return [romaji.to_kana(w) for w in key.split() if w] or [romaji.to_kana(key)]
+        words = [w for w in key.split() if w] or [key]
+        # A foreign word is left in latin script, which `moras.split` keeps as a
+        # single unit. Transliterating it would invent moras nobody sings.
+        return [w if is_foreign(w) else romaji_to_kana(w) for w in words]
     return [kana for _surface, kana in analyse_words(key)]
 
 
@@ -284,6 +343,8 @@ def write_table(path: Path, rows: list[tuple[int, str, str, str]]) -> None:
         f.write("# anywhere the analyser guessed a reading the singer does not use.\n")
         f.write("# Readings must be hiragana. Rows are matched by SURFACE text,\n")
         f.write("# so you may reorder or renumber freely.\n")
+        f.write("# SPACES IN THE READING MARK WORD BREAKS. They set where the\n")
+        f.write("# romaji karaoke puts its spaces; move one to re-split a word.\n")
         for n, flag, surface, reading in rows:
             f.write(f"{n}\t{flag}\t{surface}\t{reading}\n")
 
@@ -298,12 +359,24 @@ def detect_source(lyrics: Path) -> str:
 
 def from_lyrics(lyrics: Path, overrides: dict[str, str] | None = None,
                 source: str = "jp") -> list[tuple[int, str, str]]:
-    """Parse a lyrics file into [(line_no, surface, reading)], skipping blanks."""
+    """Parse a lyrics file into [(line_no, surface, reading)], skipping blanks.
+
+    The reading keeps its **word boundaries as spaces**. That is not cosmetic:
+    this row is what phase 1 writes to the readings TSV, and phase 2 reads that
+    file back as an override, where `resolve_words` treats an unspaced reading
+    as a single word. Joining the words with "" here therefore destroyed every
+    word boundary in the finished karaoke -- the romaji track came out as one
+    run-on string -- even though the analyser had the boundaries all along.
+
+    Phase 1 skips whitespace when it builds alignment units, so the spaces cost
+    nothing there.
+    """
     overrides = overrides or {}
     rows: list[tuple[int, str, str]] = []
     for i, raw in enumerate(lyrics.read_text(encoding="utf-8").splitlines(), 1):
         surface = normalise_surface(raw)
         if not surface:
             continue
-        rows.append((i, surface, resolve(surface, overrides, source)))
+        rows.append((i, surface,
+                     " ".join(resolve_words(surface, overrides, source))))
     return rows
