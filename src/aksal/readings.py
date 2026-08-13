@@ -225,14 +225,22 @@ def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "") -> bool:
     gakusei desu). Case and topic particles never attach, which is what keeps
     は as its own "wa".
     """
+    if prev_pos1 == "接頭辞":
+        # A prefix owns the word after it: お酒 is "osake", not "o sake". There
+        # was no rule for this at all, and no song in the corpus happened to
+        # contain one -- a gap found by comparing against cutlet's rules rather
+        # than by testing more songs.
+        return True
     if pos1 == "接尾辞":
-        # Suffixes do NOT attach. Measured against the hand-timed corpus, a
-        # timer treats 的 / まみれ / だらけ as words of their own -- the
-        # highlight breaks there -- and attaching them produced run-ons like
-        # "zettaiteki" for "zettai teki". Only three distinct suffixes occur in
-        # the corpus, so this is evidence-based but thin; the readings table is
-        # the override for anything it gets wrong.
-        return False
+        # Suffixes split two ways and the POS tag does not separate them, so
+        # this is decided on the finer tag plus evidence from the hand-timed
+        # corpus:
+        #   形状詞的  的 / だらけ      -- a timer breaks the highlight here
+        #   名詞的    さ / たち / 人 / さん -- part of the word (yasashisa,
+        #                                    kodomotachi, sannin)
+        # まみれ is 名詞的 and the corpus separates it, so it is a known miss;
+        # the readings table is the override.
+        return pos2 != "形状詞的"
     if pos2 == "接続助詞":
         return surface in INFLECTIONAL_CONJUNCTIVE
     if pos1 == "助動詞":                     # た, ます, ない, だ
