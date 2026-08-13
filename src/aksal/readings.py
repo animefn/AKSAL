@@ -68,7 +68,7 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
     analyser's own tokenisation.
     """
     out: list[tuple[str, str, str]] = []      # (surface, kana, pos1)
-    prev_pos1 = ""
+    prev_pos1 = prev_pos2 = ""
     for chunk in text.split():
         first_in_chunk = True
         chunk_start = len(out)
@@ -94,12 +94,17 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
 
             kana = jaconv.kata2hira(kana)
             if out and not first_in_chunk and _attaches(prev_pos1, pos1, pos2,
-                                                       word.surface):
+                                                       word.surface, prev_pos2):
                 surface, prev_kana, prev_tag = out[-1]
                 out[-1] = (surface + word.surface, prev_kana + kana, prev_tag)
+                # The merged word keeps its HEAD's part of speech. Without this
+                # 行くんだ stalled: ん merges onto the verb, prev_pos1 became
+                # 助詞, and だ then had nothing verbal to attach to. Widening the
+                # auxiliary rule to compensate broke 的 + な into "tekina".
+                pos1 = prev_tag
             else:
                 out.append((word.surface, kana, pos1))
-            prev_pos1 = pos1
+            prev_pos1, prev_pos2 = pos1, pos2
             first_in_chunk = False
 
         # Compounds are repaired per chunk, so an explicit space in the source
@@ -213,7 +218,8 @@ def repair_compounds(words: list[tuple[str, str, str]]
 INFLECTIONAL_CONJUNCTIVE = {"て", "で", "ば", "たり", "だり", "ちゃ", "じゃ"}
 
 
-def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "") -> bool:
+def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "",
+              prev_pos2: str = "") -> bool:
     """Should this token join the previous one into a single word?
 
     The analyser tokenises grammar, not orthography: 切り捨てて comes back as
@@ -241,9 +247,23 @@ def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "") -> bool:
         # まみれ is 名詞的 and the corpus separates it, so it is a known miss;
         # the readings table is the override.
         return pos2 != "形状詞的"
+    # NOT a rule: pronoun + か/も. Tried and reverted. The hand-timed corpus
+    # joins 誰か, 何か and いつも but separates 君も, どれも and どこか -- the
+    # same part-of-speech pattern with opposite conventions, because いつも is a
+    # lexicalised adverb while どこか is built compositionally. That is a lexical
+    # fact, not a grammatical one, and a POS rule cost five new run-ons trying
+    # to express it. The readings table is where such words belong.
     if pos2 == "接続助詞":
         return surface in INFLECTIONAL_CONJUNCTIVE
     if pos1 == "助動詞":                     # た, ます, ない, だ
+        # 接尾辞 included for 〜めいた, where the auxiliary lands on a
+        # suffix rather than on the stem; 準体助詞 for 行くんだ.
+        # 走るんだ is written "hashiru nda": the nominaliser ん starts a word of
+        # its own and the copula joins IT, not the verb. Checked on the previous
+        # token's fine tag, because 助詞 as a whole must never take a copula --
+        # that would fuse は and を onto whatever follows.
+        if prev_pos2 == "準体助詞":
+            return True
         return prev_pos1 in ("動詞", "形容詞", "助動詞")
     return False
 
