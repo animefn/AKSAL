@@ -164,8 +164,7 @@ def cmd_phase1(args) -> None:
 
     # --- 2. audio preprocessing ----------------------------------------------
     if args.no_preprocess:
-        log("\n--no-preprocess: raw audio, no separation or conditioning "
-            "(measurably less accurate)")
+        log("\n--no-preprocess: raw audio, no separation or conditioning")
         align_source = source
     else:
         log("\nisolating vocals")
@@ -755,7 +754,11 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--no-preprocess", action="store_true",
                         help="skip vocal separation and signal conditioning, "
                              "aligning against raw audio. Avoids the demucs "
-                             "dependency; measurably less accurate.")
+                             "dependency. Measured over eight songs against "
+                         "hand-timed karaoke, separation is roughly a wash for "
+                         "syllable timing -- very slightly better on average, "
+                         "worse in the tail -- for about four times the "
+                         "runtime.")
     return p
 
 

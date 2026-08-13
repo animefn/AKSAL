@@ -149,7 +149,7 @@ lyrics down.
 |---|---|
 | `--insert-romaji` | prefixes each phase-1 line with its romaji, invisible when rendered. For timers who cannot read Japanese. |
 | `--group word` | one karaoke cell per word instead of per syllable. Timing is identical. |
-| `--no-preprocess` | skip vocal separation. Faster, measurably less accurate. |
+| `--no-preprocess` | skip vocal separation. **~4x faster and about as accurate** — measured over eight songs it is a wash: separation is marginally better on average and worse in the tail. |
 | `--skip-cost N` | how freely the aligner may treat audio between lines as unsung. `none` disables it. |
 | `--no-lrc-hints` | ignore LRCLIB synced timings even when verified. |
 | `--lead-in SEC` | shift every cue earlier. |
