@@ -26,6 +26,20 @@ from .audio import SR
 
 DEFAULT_MODEL = "vumichien/wav2vec2-large-xlsr-japanese-hiragana"
 
+
+def make_aligner(model: str | None = None, log=print):
+    """Aligner for a model spec, whichever backend it needs.
+
+    `hiragana-asr:` selects the dual-CTC checkpoint, which is a bare state_dict
+    and cannot go through `from_pretrained`. Everything else is a normal
+    Hugging Face CTC model.
+    """
+    from . import dualctc
+
+    if dualctc.is_dualctc(model):
+        return dualctc.DualCTCAligner(model, log=log)
+    return Aligner(model or DEFAULT_MODEL, log=log)
+
 WINDOW_SEC = 20.0
 OVERLAP_SEC = 2.0
 MODEL_STRIDE = 320             # wav2vec2 downsamples 16 kHz by 320 -> 20 ms/frame

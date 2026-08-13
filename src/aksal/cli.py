@@ -216,7 +216,7 @@ def cmd_phase1(args) -> None:
 
     # --- 4. align ------------------------------------------------------------
     log("\nalignment")
-    aligner = A.Aligner(args.model, log=log)
+    aligner = A.make_aligner(args.model, log=log)
     y = prepare(align_source, proj.audio_start, proj.audio_dur,
                 condition=proj.conditioned)
     lp = aligner.emissions(y, cache=proj.emissions_cache)
@@ -510,7 +510,7 @@ def cmd_phase2(args) -> None:
         src = timing.from_reference(proj)
     log(f"  timing against {src.describe()}")
 
-    aligner = A.Aligner(proj.model or A.DEFAULT_MODEL, log=log)
+    aligner = A.make_aligner(proj.model or A.DEFAULT_MODEL, log=log)
     y = prepare(src.audio, src.start, src.dur, condition=src.conditioned)
     lp = aligner.emissions(y, cache=proj.sibling(f".emissions.{src.cache_tag}.pt"))
     env = envelope(y)
