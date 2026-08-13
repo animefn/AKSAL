@@ -5,19 +5,7 @@ lookup -- lyrics, the official track, synced timings -- needs the SONG title,
 and searching those services with an anime name returns nothing useful.
 
 Three databases are queried, because measured against the test set each one
-fails differently and none is sufficient alone:
-
-    show                     AnimeThemes            MAL/Jikan   ANN
-    Duel Masters LOST        wrong series (VSR)     503/504     correct
-    Cross Fight B-Daman      correct                503/504     nothing
-    Cross Fight B-Daman eS   wrong series (non-eS)  503/504     nothing
-
-AnimeThemes' fuzzy search is the dangerous one: asked for "eS" it silently
-returns the themes of the show without "eS" and reports nothing unusual. So
-every result carries the SERIES NAME IT ACTUALLY MATCHED, and the caller is
-expected to show it. Nothing here ever picks for the user -- a wrong series is
-obvious to a human reading "Duel Masters VSR" and invisible to any heuristic
-worth writing.
+fails differently and none is sufficient alone.
 """
 from __future__ import annotations
 

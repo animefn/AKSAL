@@ -225,8 +225,14 @@ def _attaches(prev_pos1: str, pos1: str, pos2: str, surface: str = "") -> bool:
     gakusei desu). Case and topic particles never attach, which is what keeps
     は as its own "wa".
     """
-    if pos1 == "接尾辞":                     # 〜的, 〜さ, 〜達
-        return True
+    if pos1 == "接尾辞":
+        # Suffixes do NOT attach. Measured against the hand-timed corpus, a
+        # timer treats 的 / まみれ / だらけ as words of their own -- the
+        # highlight breaks there -- and attaching them produced run-ons like
+        # "zettaiteki" for "zettai teki". Only three distinct suffixes occur in
+        # the corpus, so this is evidence-based but thin; the readings table is
+        # the override for anything it gets wrong.
+        return False
     if pos2 == "接続助詞":
         return surface in INFLECTIONAL_CONJUNCTIVE
     if pos1 == "助動詞":                     # た, ます, ない, だ

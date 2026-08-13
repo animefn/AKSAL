@@ -544,3 +544,46 @@ def test_a_clause_joiner_stays_its_own_word(text, expected):
     them. Defaulting to 'separate' is the safer direction: a missed inflection
     costs one visible space, a merged joiner costs a run-on word."""
     assert _romaji_of(text) == expected
+
+
+# --- the segmentation rules, stated as cases -----------------------------------
+#
+# Word segmentation is a TEXT problem, so it gets a text test. The timing scorer
+# folds whitespace away by design -- so that a spacing difference cannot disturb
+# a timing comparison -- which also made it structurally unable to see a run-on
+# word. One survived the entire corpus and dozens of runs unscored. These cases
+# are taken from hand-timed karaoke, where a word boundary is where the human
+# chose to break the highlight.
+
+@pytest.mark.parametrize("text,expected", [
+    ("絶対的", "zettai teki"),        # 接尾辞: a suffix is its own word
+    ("雑音だらけ", "zatsuon darake"),
+    ("葬られるけど", "houmurareru kedo"),   # 接続助詞 joining clauses
+    ("走るから", "hashiru kara"),
+    ("切り捨てて", "kirisutete"),           # 接続助詞 as inflection: attaches
+    ("行きます", "ikimasu"),                # 助動詞 on a verb: attaches
+    ("母は花を買う", "haha wa hana o kau"),  # particles never attach
+])
+def test_word_boundaries_match_a_human_timer(text, expected):
+    assert _romaji_of(text) == expected
+
+
+def test_the_corpus_wide_run_on_count_does_not_regress():
+    """A ceiling, not a target. Segmentation is currently wrong on a handful of
+    words out of ~700 in the hand-timed corpus; this fails if that gets worse.
+
+    Kept as a number rather than a list because the point is to catch a RULE
+    that starts over-merging, which is how every spacing bug here has arrived.
+    """
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    audit = Path(__file__).resolve().parents[2] / "tests" / "segaudit.py"
+    if not audit.exists():                      # corpus not present in a clone
+        pytest.skip("segmentation corpus not available")
+    out = subprocess.run([sys.executable, str(audit)], capture_output=True,
+                         text=True, encoding="utf-8", errors="replace",
+                         cwd=audit.parent).stdout
+    total = int(out.rsplit("corpus:", 1)[1].strip())
+    assert total <= 5, f"segmentation regressed to {total} run-on words\n{out}"
