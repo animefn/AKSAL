@@ -224,23 +224,26 @@ def cmd_phase1(args) -> None:
     log(f"  emissions: {tuple(lp.shape)}")
 
     # One unit per character here: phase 1 only needs line boundaries.
-    units, owner = [], []
-    for line_no, _surface, reading in rows:
-        for ch in reading:
-            if not ch.isspace():
-                units.append(ch)
-                owner.append(line_no)
+    line_units = [[ch for ch in reading if not ch.isspace()]
+                  for _n, _s, reading in rows]
+    line_nos = [n for n, _s, _r in rows]
 
-    timed = aligner.align_units(lp, units)
-    for item, line_no in zip(timed, owner):
-        item["line"] = line_no
+    if args.skip_cost is None:
+        timed_flat = aligner.align_units(lp, [u for g in line_units for u in g])
+        groups, cursor = [], 0
+        for g in line_units:
+            groups.append(timed_flat[cursor:cursor + len(g)])
+            cursor += len(g)
+    else:
+        # Let the path spend instrumental passages on a skip state instead of
+        # on syllables. See Aligner.align_groups.
+        groups = aligner.align_groups(lp, line_units, skip_cost=args.skip_cost)
 
-    groups: list[list[dict]] = []
-    for item in timed:
-        if groups and groups[-1][0]["line"] == item["line"]:
-            groups[-1].append(item)
-        else:
-            groups.append([item])
+    timed = [item for g in groups for item in g]
+    for g, line_no in zip(groups, line_nos):
+        for item in g:
+            item["line"] = line_no
+    groups = [g for g in groups if g]
 
     # LRCLIB line timings, where they can be trusted, are ground truth for line
     # STARTS. They are timed against the studio track starting at zero, which is
@@ -662,6 +665,15 @@ def build_parser() -> argparse.ArgumentParser:
                     help="script of the lyrics file (default: auto-detect). "
                          "Romaji is parsed straight to kana, skipping the "
                          "morphological analyser entirely.")
+    def skip_cost(v):
+        return None if str(v).lower() in ("none", "off") else float(v)
+
+    p1.add_argument("--skip-cost", type=skip_cost, default=-1.5,
+                    help="log-probability of the skip state, which lets audio "
+                         "between lines match nothing. Less negative skips "
+                         "more freely; --skip-cost=none disables it and falls "
+                         "back to plain forced alignment, which must place "
+                         "every syllable somewhere. Default: -1.5")
     p1.add_argument("--lrc-query",
                     help="override the search string used to look up LRCLIB "
                          "synced timings (default: the song title and artist)")

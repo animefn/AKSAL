@@ -183,6 +183,90 @@ class Aligner:
                                           blank=self.blank)
         return merge_tokens(labels[0], scores[0], blank=self.blank)
 
+    # --- alignment with a skip state ------------------------------------------
+
+    def align_groups(self, lp: torch.Tensor, groups: list[list[str]],
+                     skip_cost: float = -1.5, frame_offset: int = 0
+                     ) -> list[list[dict]]:
+        """Align line by line, allowing audio BETWEEN lines to match nothing.
+
+        This is the fix for the defect at the centre of phase 1. Plain forced
+        alignment must consume every token, and it has no way to say "nothing is
+        sung here" -- so an instrumental passage cannot be left empty, and the
+        surrounding lines are dragged into it. A line after a long rest starts
+        seconds early; a rest in the middle of a line gets spent as a held
+        syllable; and a lyric sheet longer than the cut is smeared over the
+        whole song rather than refused.
+
+        `forced_align` supports this directly through a `<star>` token: extend
+        the emission matrix with one extra column and put a star between every
+        pair of lines. The star matches any audio, so the path can spend a rest
+        on it instead of on a syllable.
+
+        `skip_cost` is the log-probability given to that column, and it is the
+        only knob. At 0 the star is free and will happily swallow singing too;
+        made very negative it is never used and this degrades to plain forced
+        alignment. Between those, it absorbs passages that match the lyrics
+        poorly while leaving genuine singing to the real tokens.
+        """
+        flat: list[str] = [u for g in groups for u in g]
+        token_ids, spans, missing = self.tokenise(flat)
+        if not token_ids:
+            return [[{"text": u, "start": None, "end": None, "conf": 0.0}
+                     for u in g] for g in groups]
+
+        star = lp.shape[-1]
+        lp_star = torch.cat(
+            [lp, torch.full((lp.shape[0], 1), float(skip_cost),
+                            dtype=lp.dtype)], dim=-1)
+
+        # Interleave one star before, between and after the lines. Each line's
+        # tokens stay contiguous, so a star can only ever absorb audio at a line
+        # boundary -- never in the middle of a word.
+        targets: list[int] = [star]
+        # Where each unit's tokens ended up in `targets`, so the result can be
+        # taken apart again. Built while appending rather than recomputed after,
+        # because the star offsets make any recomputation fiddly and wrong.
+        placed: list[tuple[int, int]] = []
+        unit_i = 0
+        for g in groups:
+            for _u in g:
+                a, b = spans[unit_i]
+                start = len(targets)
+                targets.extend(token_ids[a:b])
+                placed.append((start, len(targets)))
+                unit_i += 1
+            targets.append(star)
+
+        if len(targets) > lp_star.shape[0]:
+            raise ValueError(
+                f"{len(targets)} tokens will not fit in {lp_star.shape[0]} "
+                "frames -- the window is too short for this text")
+
+        tok_spans = self._align(lp_star, targets)
+
+        out: list[list[dict]] = []
+        unit_i = 0
+        for g in groups:
+            line: list[dict] = []
+            for u in g:
+                a, b = placed[unit_i]
+                owned = tok_spans[a:b]
+                if owned:
+                    start = (owned[0].start + frame_offset) * SEC_PER_FRAME
+                    conf = float(np.exp(np.mean([s.score for s in owned])))
+                    line.append({"text": u, "start": round(start, 3),
+                                 "end": None, "conf": round(conf, 4)})
+                else:
+                    line.append({"text": u, "start": None, "end": None,
+                                 "conf": 0.0})
+                unit_i += 1
+            out.append(line)
+        if missing:
+            self.log(f"  note: {len(missing)} character(s) not in the model "
+                     f"vocabulary: {''.join(sorted(missing))}")
+        return out
+
     def align_units(self, lp: torch.Tensor, units: list[str],
                     frame_offset: int = 0) -> list[dict]:
         """Align `units` against an emission matrix; times are absolute seconds."""

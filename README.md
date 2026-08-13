@@ -13,6 +13,8 @@ aksal phase2 OP01.lines.ass
 
 *أكسل — "lazier". It does the tedious part.*
 
+**→ [USAGE.md](USAGE.md) — every workflow, with examples.**
+
 ---
 
 ## Motivation
