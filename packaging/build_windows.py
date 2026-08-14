@@ -24,22 +24,25 @@ WORK = ROOT / "build"
 
 # Pulled in by transformers/torch but never reached on this path. Excluding
 # them is most of the difference between a large build and an absurd one.
+# Only whole packages that nothing here imports. NEVER a submodule of a package
+# we do use: torch imports torch.distributed from its own dataloader, and sympy
+# imports sympy.plotting from its __init__, so excluding either produces a build
+# that succeeds and an executable that dies on its first line. That happened
+# twice before this rule was written down.
 EXCLUDE = [
     "tensorflow", "flax", "jax", "jaxlib", "keras",
-    "torch.distributed", "torch.testing", "torch.utils.tensorboard",
-    "torchvision", "torchaudio.prototype",
+    "torchvision",
     "matplotlib", "pandas", "IPython", "notebook", "jupyter",
-    "pytest", "_pytest", "sympy.plotting", "tkinter",
-    # Optional at runtime: separation is opt-in, and yt-dlp is only used by
-    # `find`. Both are better installed alongside than frozen in.
+    "pytest", "_pytest", "tkinter",
+    # Optional at runtime: separation is opt-in and yt-dlp is only used by
+    # `find`, so both are better installed alongside than frozen in.
     "demucs", "julius", "openunmix", "yt_dlp",
-    # Measured in a first build: 246 MB of modules nothing on this path calls,
-    # dragged in by transformers' optional imports. Audio is decoded by shelling
-    # out to ffmpeg, so PyAV is never touched; nothing here does vision, ONNX or
+    # Measured at 246 MB in a first build, all of it reached only through
+    # transformers' optional imports. Audio is decoded by shelling out to
+    # ffmpeg, so PyAV is never touched, and nothing here does vision, ONNX or
     # classical ML.
-    "cv2", "av", "onnxruntime", "onnx", "sklearn", "scipy.sparse.csgraph",
-    "nltk", "sentencepiece", "safetensors.mlx", "safetensors.tensorflow",
-    "PIL", "Pillow", "timm", "accelerate", "datasets", "evaluate",
+    "cv2", "av", "onnxruntime", "onnx", "sklearn", "nltk", "sentencepiece",
+    "PIL", "timm", "accelerate", "datasets", "evaluate",
 ]
 
 HIDDEN = [
@@ -79,6 +82,17 @@ def main() -> int:
     rc = subprocess.run(cmd, cwd=ROOT).returncode
     if rc != 0:
         return rc
+
+    # A build that completes proves nothing. Both previous builds exited 0 and
+    # produced an executable that died on its first import, so the artefact is
+    # RUN before its size is reported.
+    exe = DIST / ("aksal.exe" if onefile else Path("aksal") / "aksal.exe")
+    probe = subprocess.run([str(exe), "--help"], capture_output=True, text=True)
+    if probe.returncode != 0 or "phase1" not in (probe.stdout or ""):
+        print("\nBUILD IS DEAD -- the executable does not start:")
+        print((probe.stderr or probe.stdout or "")[-1500:])
+        return 1
+    print("  smoke test: --help ok")
 
     target = DIST / ("aksal.exe" if onefile else "aksal")
     total = (target.stat().st_size if onefile else

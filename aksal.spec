@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = []
-hiddenimports = ['aksal.dualctc', 'aksal.catalog', 'aksal.fetch', 'aksal.discover', 'sklearn.utils._typedefs', 'scipy.special.cython_special']
+hiddenimports = ['aksal.dualctc', 'aksal.hfmodel', 'aksal.catalog', 'aksal.fetch', 'aksal.discover', 'scipy.special.cython_special']
 datas += collect_data_files('unidic_lite')
 datas += collect_data_files('ipadic')
 hiddenimports += collect_submodules('transformers.models.wav2vec2')
@@ -18,7 +18,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tensorflow', 'flax', 'jax', 'jaxlib', 'keras', 'torch.distributed', 'torch.testing', 'torch.utils.tensorboard', 'torchvision', 'torchaudio.prototype', 'matplotlib', 'pandas', 'IPython', 'notebook', 'jupyter', 'pytest', '_pytest', 'sympy.plotting', 'tkinter', 'demucs', 'julius', 'openunmix', 'yt_dlp', 'cv2', 'av', 'onnxruntime', 'onnx', 'sklearn', 'scipy.sparse.csgraph', 'nltk', 'sentencepiece', 'safetensors.mlx', 'safetensors.tensorflow', 'PIL', 'Pillow', 'timm', 'accelerate', 'datasets', 'evaluate'],
+    excludes=['tensorflow', 'flax', 'jax', 'jaxlib', 'keras', 'torchvision', 'matplotlib', 'pandas', 'IPython', 'notebook', 'jupyter', 'pytest', '_pytest', 'tkinter', 'demucs', 'julius', 'openunmix', 'yt_dlp', 'cv2', 'av', 'onnxruntime', 'onnx', 'sklearn', 'nltk', 'sentencepiece', 'PIL', 'timm', 'accelerate', 'datasets', 'evaluate'],
     noarchive=False,
     optimize=0,
 )

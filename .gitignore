@@ -51,3 +51,6 @@ out/
 *.vtt
 *.tsv
 *.log
+dist/
+build/
+*.spec
