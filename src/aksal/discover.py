@@ -145,7 +145,7 @@ def get_reference(theme: catalog.Theme, video: Path, dest: Path,
     return None
 
 
-def run(anime: str, video: Path, out: Path, kind: str | None = None,
+def run(anime: str, video: Path | None, out: Path, kind: str | None = None,
         song_start: float | None = None, duration: float = 92.0,
         auto: bool = False, pick: int | None = None, log=print) -> Found:
     found = Found()
@@ -157,6 +157,15 @@ def run(anime: str, video: Path, out: Path, kind: str | None = None,
     log(f"\nselected: {theme.describe()}   (series: {theme.series})")
 
     found.lyrics_url = get_lyrics_url(theme, auto, context=anime, log=log)
+
+    if video is None:
+        # Without the episode there is nothing to fingerprint a download
+        # against, and an unverified reference is worse than none: the top
+        # search result for a song is routinely a MAD or a cover, and both
+        # align to plausible-looking nonsense.
+        log("\nskipping the reference track: it can only be verified against "
+            "an episode")
+        return found
 
     s_start = max((song_start or 0.0) - 120.0, 0.0)
     s_dur = duration + 240.0

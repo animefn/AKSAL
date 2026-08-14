@@ -51,6 +51,15 @@ aksal phase2 mylines.ass --video EP01.mkv --reference "full song.flac"
 aksal find --anime "Cross Fight B-Daman eS" --video EP16.mkv --op
 ```
 
+Just want to know what the song is? Drop `--video` — it will name the theme and
+find the lyrics, but cannot fetch a reference track, because the only way to
+know a download really is this show's recording is to fingerprint it against
+your episode:
+
+```bash
+aksal find --anime "Cross Fight B-Daman eS" --op
+```
+
 Asks three anime databases who did the theme, downloads the official track,
 **fingerprints it against your episode to prove it is the right recording**,
 looks for lyrics, then offers to run phase 1 immediately.
@@ -148,7 +157,7 @@ lyrics down.
 
 | flag | why |
 |---|---|
-| `--insert-romaji` | prefixes each phase-1 line with its romaji, invisible when rendered. For timers who cannot read Japanese. |
+| `--no-insert-romaji` | phase 1 prefixes each line with its romaji by default, invisible when rendered. This turns that off. |
 | `--group word` | one karaoke cell per word instead of per syllable. Timing is identical. |
 | `--separate-audio` | isolate vocals with demucs first. **Off by default** — measured over eight songs it is a wash: marginally better on average, worse in the tail, for ~4x the runtime. Worth trying on a noisy mix. |
 | `--model` | use a different acoustic model: a Hugging Face id, or a path to a checkpoint. It must emit **kana** and the tool refuses it if not. |

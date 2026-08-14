@@ -277,7 +277,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--reference PATH` | — | The official track. Lets you use the **full** lyric sheet: cut lines drop out automatically. |
 | `--song-start TIME` | — | Roughly where the song starts, e.g. `0:36` or `21:30`. A hint with `--reference`; required and exact-ish without one. |
 | `--duration SEC` | `92` | How long the song runs in the video. Without `--reference` it also bounds the lyrics. |
-| `--insert-romaji` | off | Prefix each line with its romaji as `{*RO*…*RO*}`. Invisible when rendered, visible in Aegisub's edit box. |
+| `--insert-romaji` / `--no-insert-romaji` | **on** | Prefix each line with its romaji as `{*RO*…*RO*}`. Invisible when rendered, visible in Aegisub's edit box — you are about to correct these lines, so you need to tell them apart. |
 | `--refresh-lyrics` | off | Re-fetch even if a cached copy exists. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
 | `--lead-in SEC` | `0` | Shift every cue earlier. |
@@ -307,7 +307,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | flag | default | meaning |
 |---|---|---|
 | `--anime NAME` | required | Series name, e.g. `"Cross Fight B-Daman eS"`. |
-| `--video PATH` | required | The episode, used to verify the downloaded track really is this show's. |
+| `--video PATH` | — | The episode. **Optional**: without it this is a lookup only, since verifying a downloaded track means fingerprinting it against your episode. |
 | `-o`, `--out PATH` | `<video>.lines.ass` | Where phase 1 should write. |
 | `--op` / `--ed` | both | Consider only openings, or only endings. |
 | `--song-start TIME` | — | Narrows the verification search; passed through to phase 1. |

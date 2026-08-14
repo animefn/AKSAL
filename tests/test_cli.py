@@ -75,3 +75,19 @@ def test_song_start_accepts_the_three_timestamp_forms():
     assert parse_time("0:01:36.4") == pytest.approx(96.4)
     with pytest.raises(Exception):
         parse_time("nonsense")
+
+
+def test_find_does_not_require_a_video():
+    """Looking up what a show's theme is should not demand the episode. The
+    episode is only needed to VERIFY a downloaded track, and someone asking
+    "what is this song" has not got that far yet."""
+    assert flags("find")["--video"].required is False
+
+
+def test_romaji_hints_are_on_by_default():
+    """Phase 1 exists to be corrected in Aegisub, which is impossible if you
+    cannot tell the lines apart. The hint renders as nothing, so the cost of
+    having it on is zero and the cost of forgetting it is a wasted pass."""
+    a = flags("phase1")["--insert-romaji"]
+    assert a.default is True
+    assert "--no-insert-romaji" in flags("phase1")

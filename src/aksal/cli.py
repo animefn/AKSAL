@@ -363,7 +363,7 @@ def cmd_phase1(args) -> None:
     if flagged:
         log(f"\n{len(flagged)} reading(s) worth checking: "
             f"{', '.join(str(t[0]) for t in flagged)}")
-    log(f"\nNext: fix the lines in Aegisub, then\n"
+    log(f"\nNext: fix the lines in Aegisub, then run\n"
         f"  aksal phase2 {out_lines}")
 
 
@@ -642,12 +642,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="a local file, a Uta-Net song URL, or a search term "
                          "for LRCLIB. Whatever the source, the text is cached "
                          "into the project so you can correct it by hand.")
-    p1.add_argument("--insert-romaji", action="store_true",
+    p1.add_argument("--insert-romaji", action=argparse.BooleanOptionalAction,
+                    default=True,
                     help="prefix each line with its romaji as {*RO*...*RO*}. "
-                         "Invisible when rendered, but shown in Aegisub's edit "
-                         "box -- so a timer who cannot read Japanese can still "
-                         "tell the lines apart. Strip with "
-                         r"\{\*RO\*.*?\*RO\*\}")
+                         "ON by default: phase 1 exists to be corrected in "
+                         "Aegisub, which is impossible if you cannot tell the "
+                         "lines apart, and the hint is invisible when rendered "
+                         "because players ignore unknown tag content. Strip "
+                         r"with \{\*RO\*.*?\*RO\*\} or pass --no-insert-romaji.")
     p1.add_argument("--refresh-lyrics", action="store_true",
                     help="re-fetch even if the project already has a cached copy")
     p1.add_argument("--reference", type=Path,
@@ -727,7 +729,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="anime name -> song, lyrics and reference track")
     pf.add_argument("--anime", required=True,
                     help="series name, e.g. \"Cross Fight B-Daman eS\"")
-    pf.add_argument("--video", required=True, type=Path)
+    pf.add_argument("--video", type=Path, default=None,
+                    help="the episode. Optional: without it this is a lookup "
+                         "only -- it will tell you what the song is and where "
+                         "the lyrics are, but cannot fetch a reference track, "
+                         "because the check that a download is really this "
+                         "show's recording is fingerprinting it against your "
+                         "episode.")
     pf.add_argument("-o", "--out", type=Path, default=None,
                     help="where phase 1 should write; everything is a sibling")
     pf.add_argument("--op", dest="kind", action="store_const", const="OP",
@@ -771,9 +779,13 @@ def cmd_find(args) -> None:
     """
     from . import discover
 
-    video: Path = args.video
-    out = args.out or Path.cwd() / f"{video.stem[:60]}.lines.ass"
+    video: Path | None = args.video
+    stem = video.stem[:60] if video else args.anime[:60].replace(" ", "-")
+    out = args.out or Path.cwd() / f"{stem}.lines.ass"
     out.parent.mkdir(parents=True, exist_ok=True)
+
+    if video is None:
+        log("  lookup only: no --video, so no reference track can be verified")
 
     found = discover.run(args.anime, video, out, kind=args.kind,
                          song_start=args.song_start, duration=args.duration,
@@ -786,7 +798,10 @@ def cmd_find(args) -> None:
     log(f"song      : {found.theme.title}"
         + (f" by {found.theme.artist}" if found.theme.artist else ""))
     log(f"lyrics    : {found.lyrics_url or 'NOT FOUND -- supply a file'}")
-    log(f"reference : {found.reference or 'NOT FOUND -- exact-cut lyrics needed'}")
+    if video is None:
+        log("reference : not looked for (lookup only)")
+    else:
+        log(f"reference : {found.reference or 'NOT FOUND -- exact-cut lyrics needed'}")
     if found.synced:
         log(f"lrclib    : {found.synced} synced line timings available as hints")
     log("-" * 62)
@@ -794,6 +809,13 @@ def cmd_find(args) -> None:
     if not found.lyrics_url:
         raise SystemExit(
             "no lyrics. Save them to a file and pass --lyrics FILE to phase1.")
+    if video is None:
+        # Lookup only. Nothing failed, so this is not an error -- the user asked
+        # what the song was and got an answer.
+        log("\nTo go further, add --video: the official track can then be\n"
+            "fetched and checked against your episode, which is the only way\n"
+            "to know a download is really this show's recording.")
+        return
     if found.reference is None and args.song_start is None:
         raise SystemExit(
             "no reference track was verified, so phase 1 needs BOTH\n"
