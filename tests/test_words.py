@@ -587,3 +587,40 @@ def test_the_corpus_wide_run_on_count_does_not_regress():
                          cwd=audit.parent).stdout
     total = int(out.rsplit("corpus:", 1)[1].strip())
     assert total <= 5, f"segmentation regressed to {total} run-on words\n{out}"
+
+
+# --- bring your own acoustic model ---------------------------------------------
+
+def test_a_kanji_vocabulary_is_rejected():
+    """Alignment units are moras, so a full ASR model that writes kanji aligns
+    to the wrong sounds -- and gives no sign of it, because the output looks
+    entirely ordinary. Measured: one popular Japanese checkpoint has 2,155
+    kanji tokens against 74 kana."""
+    from aksal import hfmodel
+
+    kanji = {c: i for i, c in enumerate("日本語漢字森川空海山")}
+    ok, share = hfmodel.looks_like_kana_vocab(kanji)
+    assert not ok and share == 0.0
+
+
+def test_a_kana_vocabulary_is_accepted():
+    from aksal import hfmodel
+
+    kana = {c: i for i, c in enumerate("あいうえおかきくけこ")}
+    ok, share = hfmodel.looks_like_kana_vocab(kana)
+    assert ok and share == 1.0
+
+
+def test_a_mixed_vocabulary_is_judged_on_the_kana_share():
+    from aksal import hfmodel
+
+    mixed = {c: i for i, c in enumerate("あいうえお日本語漢字")}
+    ok, share = hfmodel.looks_like_kana_vocab(mixed)
+    assert not ok
+    assert 0.5 > share > 0.4
+
+
+def test_an_empty_vocabulary_does_not_crash():
+    from aksal import hfmodel
+
+    assert hfmodel.looks_like_kana_vocab({}) == (False, 0.0)

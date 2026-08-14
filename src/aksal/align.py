@@ -48,9 +48,24 @@ class Aligner:
     """
 
     def __init__(self, model: str | None = None, log=print):
-        from . import dualctc
+        """`model` selects the acoustic model:
 
-        dualctc.load_into(self, model or dualctc.DEFAULT_SPEC, log=log)
+            None                     the built-in kana model, downloaded once
+            hiragana-asr:PATH.pt     a local dual-CTC checkpoint
+            PATH.pt                  the same
+            any other string         a Hugging Face CTC model id
+
+        The pipeline needs only a kana vocabulary, a blank index and 20 ms
+        frames, so any model meeting that works -- see `hfmodel`, which checks
+        all three rather than trusting them.
+        """
+        from . import dualctc, hfmodel
+
+        spec = (model or "").strip()
+        if not spec or spec.startswith(dualctc.SPEC_PREFIX) or spec.endswith(".pt"):
+            dualctc.load_into(self, spec or None, log=log)
+        else:
+            hfmodel.load_into(self, spec, log=log)
 
     # --- emissions ------------------------------------------------------------
 

@@ -173,8 +173,13 @@ def compute_emissions(aligner, y: np.ndarray,
         inputs = aligner.processor(chunk, sampling_rate=SR,
                                    return_tensors="pt", padding=False)
         with torch.inference_mode():
-            hidden = aligner.model(inputs.input_values).last_hidden_state
-            logits = aligner.kana_head(hidden)[0]
+            if getattr(aligner, "kana_head", None) is None:
+                # A stock Hugging Face CTC model emits logits directly; the
+                # dual-CTC checkpoint is an encoder plus a separate kana head.
+                logits = aligner.model(inputs.input_values).logits[0]
+            else:
+                hidden = aligner.model(inputs.input_values).last_hidden_state
+                logits = aligner.kana_head(hidden)[0]
         lp = torch.log_softmax(logits, dim=-1)
 
         # Keep the frames furthest from a window seam, where the model had the
