@@ -316,5 +316,14 @@ def line_sourced(source_line: str, words: list[str],
     for i in range(len(owner) - 1):
         if owner[i + 1] != owner[i]:
             out[i] += gaps[owner[i]] or " "
+    out[-1] += gaps[-1]
+
+    # The guarantee, checked rather than assumed. Preservation otherwise rests
+    # on three separate mechanisms agreeing -- span slicing, mora regrouping and
+    # gap bookkeeping -- and each has its own way to drop a character. One
+    # comparison turns "probably verbatim" into "verbatim, or we say so and the
+    # caller falls back".
+    if "".join(out) != source_line:
+        return None
     return out
 

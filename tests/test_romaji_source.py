@@ -90,3 +90,53 @@ def test_word_grouping_keeps_the_source_spelling():
     spans = moras.group_by_word(owner)
     assert ["".join(ro[a:b + 1]) for a, b in spans] == [
         "tsudzukete ", "PURAIDO ", "no ", "uta"]
+
+
+def test_never_rewrites_silently_even_on_hostile_input():
+    """The invariant, stated as a property rather than as examples.
+
+    Preservation rests on three mechanisms agreeing -- span slicing, mora
+    regrouping, gap bookkeeping -- and each has its own way to drop a
+    character. So `line_sourced` compares its output against the input before
+    returning. This asserts the only thing that matters: it is either exactly
+    what the user typed, or it declines. Never something in between.
+    """
+    import random
+
+    rng = random.Random(7)
+    alphabet = (list("abcdefghijkmnoprstuwyz") + list("AEIOU")
+                + list("!?,.'-「」()[]~") + [" ", "  ", "	", "　"])
+    for _ in range(4000):
+        line = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 24)))
+        words = readings.resolve_words(line, {}, "romaji")
+        units, owner = moras.split_words(words)
+        got = romaji.line_sourced(line, words, owner)
+        if got is None:
+            continue
+        assert "".join(got) == line, line
+        assert len(got) == len(units), line
+
+
+def test_plausible_romaji_is_never_declined():
+    """Declining is safe but lossy -- the user gets our spelling, not theirs.
+
+    So it must not fire on input that actually is romaji. Measured over the
+    7292 romaji lines of the test corpus it never does; this keeps a cheap
+    synthetic version of that check in the suite.
+    """
+    import random
+
+    rng = random.Random(3)
+    syl = ["ka", "ki", "ku", "ke", "ko", "sa", "shi", "su", "na", "no",
+           "ta", "te", "to", "mi", "ru", "wa", "n"]
+    punct = ["!", "?", ",", ".", "...", "「", "」", "~"]
+    for _ in range(1500):
+        parts = ["".join(rng.choice(syl) for _ in range(rng.randint(1, 4)))
+                 for _ in range(rng.randint(1, 5))]
+        if rng.random() < 0.5:
+            parts[rng.randrange(len(parts))] += rng.choice(punct)
+        line = " ".join(parts)
+        words = readings.resolve_words(line, {}, "romaji")
+        _units, owner = moras.split_words(words)
+        got = romaji.line_sourced(line, words, owner)
+        assert got is not None and "".join(got) == line, line

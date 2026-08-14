@@ -120,23 +120,29 @@ def romaji_tokens(text: str) -> tuple[list[str], list[str]]:
     time and, under --group word, invent a word the user never wrote.
 
     Everything the user typed survives: the gaps are returned rather than
-    discarded, so the caller reassembles the line exactly as written, repeated
-    spaces and all.
+    discarded, and leading whitespace rides on the first word, so the caller
+    reassembles the line exactly as written -- repeated spaces, indentation and
+    all. `romaji.line_sourced` asserts that reassembly rather than trusting it.
     """
-    parts = re.split(r"(\s+)", text.strip())
+    parts = re.split(r"(\s+)", text)
     words: list[str] = []
     gaps: list[str] = []
+    lead = ""
     for i in range(0, len(parts), 2):
         tok = parts[i]
         gap = parts[i + 1] if i + 1 < len(parts) else ""
         if not tok:
+            lead += gap                 # leading run: it belongs to word 0
             continue
         if words and all(is_punctuation(c) for c in tok):
             words[-1] += gaps[-1] + tok
             gaps[-1] = gap
             continue
-        words.append(tok)
+        words.append(lead + tok)
+        lead = ""
         gaps.append(gap)
+    if lead and words:                  # a line that is nothing but spaces
+        words[-1] += lead
     return words, gaps
 
 

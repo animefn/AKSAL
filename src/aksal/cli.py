@@ -297,7 +297,7 @@ def cmd_phase1(args) -> None:
         for line_no, surface, _reading in rows:
             words = readings.resolve_words(surface, overrides, source)
             units, owner = moras.split_words(words)
-            cells = (romaji.line_sourced(readings.normalise_surface(surface), words, owner)
+            cells = (romaji.line_sourced(surface, words, owner)
                      if source == "romaji" else None)
             romaji_of[line_no] = "".join(
                 cells if cells is not None else romaji.line_spaced(units, owner))
@@ -576,7 +576,7 @@ def cmd_phase2(args) -> None:
         # our romanisation of the kana we derived from it.
         ro_cells = None
         if proj.lyrics_source == "romaji":
-            ro_cells = romaji.line_sourced(readings.normalise_surface(surface), words, owner)
+            ro_cells = romaji.line_sourced(surface, words, owner)
         if ro_cells is None:
             ro_cells = romaji.line_spaced(units, owner)
         cell_starts = v_starts
