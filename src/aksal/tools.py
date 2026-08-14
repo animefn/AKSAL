@@ -28,8 +28,10 @@ from pathlib import Path
 # BtbN publishes static Windows builds on GitHub with a predictable release
 # asset name. The "essentials" variant carries the codecs needed here and is a
 # fraction of the size of the full build.
-RELEASE_API = ("https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest")
-ASSET_HINT = "win64-gpl"          # matched against the asset filenames
+FFMPEG_RELEASE_API = "https://api.github.com/repos/BtbN/FFmpeg-Builds/releases/latest"
+FFMPEG_ASSET_HINT = "win64-gpl"
+YTDLP_RELEASE_API = "https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest"
+YTDLP_ASSET = "yt-dlp.exe" if os.name == "nt" else "yt-dlp"
 
 _resolved: dict[str, str] = {}
 
@@ -109,10 +111,10 @@ def download(log=print) -> bool:
     try:
         log("  asking GitHub for the latest static build")
         req = urllib.request.Request(
-            RELEASE_API, headers={"User-Agent": "aksal", "Accept": "application/vnd.github+json"})
+            FFMPEG_RELEASE_API, headers={"User-Agent": "aksal", "Accept": "application/vnd.github+json"})
         data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
         url = next((a["browser_download_url"] for a in data.get("assets", [])
-                    if ASSET_HINT in a["name"] and a["name"].endswith(".zip")), None)
+                    if FFMPEG_ASSET_HINT in a["name"] and a["name"].endswith(".zip")), None)
         if not url:
             log("  no suitable build found in the latest release")
             return False
@@ -219,3 +221,135 @@ def ensure(log=print) -> None:
             raise SystemExit(
                 "Add ffmpeg to PATH and run again.\n"
                 "  https://www.gyan.dev/ffmpeg/builds/  or  winget install ffmpeg")
+
+
+# --- yt-dlp ---------------------------------------------------------------
+#
+# Only `find` needs it, and only to fetch a reference track. It is a single
+# self-contained executable, so the same offer that works for ffmpeg works here:
+# download it, point at it, or go without.
+#
+# It is deliberately never auto-updated. yt-dlp breaks against YouTube often
+# enough that updating itself mid-run would change results without anyone
+# asking, which is a worse failure than a clear message saying it is stale.
+
+
+def ytdlp() -> str | None:
+    """The yt-dlp binary, if there is one."""
+    if "yt-dlp" in _resolved:
+        return _resolved["yt-dlp"]
+    saved = _load_config().get("ytdlp_path")
+    for cand in (saved, str(_home() / "yt-dlp" / YTDLP_ASSET),
+                 shutil.which("yt-dlp")):
+        if cand and Path(cand).exists() and _works(cand):
+            _resolved["yt-dlp"] = cand
+            return cand
+    return None
+
+
+def download_ytdlp(log=print) -> bool:
+    import urllib.request
+
+    dest = _home() / "yt-dlp"
+    try:
+        req = urllib.request.Request(
+            YTDLP_RELEASE_API,
+            headers={"User-Agent": "aksal", "Accept": "application/vnd.github+json"})
+        data = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+        url = next((a["browser_download_url"] for a in data.get("assets", [])
+                    if a["name"] == YTDLP_ASSET), None)
+        if not url:
+            log(f"  {YTDLP_ASSET} not in the latest release")
+            return False
+        dest.mkdir(parents=True, exist_ok=True)
+        target = dest / YTDLP_ASSET
+        log(f"  downloading {YTDLP_ASSET} ({data.get('tag_name', '')})")
+        with urllib.request.urlopen(
+                urllib.request.Request(url, headers={"User-Agent": "aksal"}),
+                timeout=300) as r, open(target, "wb") as fh:
+            shutil.copyfileobj(r, fh)
+        if os.name != "nt":
+            target.chmod(0o755)
+    except Exception as exc:                            # noqa: BLE001
+        log(f"  download failed: {type(exc).__name__}: {exc}")
+        return False
+
+    _resolved.pop("yt-dlp", None)
+    ok = ytdlp() is not None
+    log("  yt-dlp is ready" if ok else "  downloaded, but it does not run")
+    return ok
+
+
+YTDLP_MISSING = """yt-dlp was not found. `find` needs it to fetch the official track.
+
+  A  download it now (a single file, kept beside this tool)
+  B  I already have it -- let me point at it
+  C  skip; I will supply --reference myself
+"""
+
+
+def ensure_ytdlp(log=print) -> bool:
+    """Offer the same three ways out as ffmpeg. False means carry on without."""
+    if ytdlp():
+        return True
+
+    log("\n" + YTDLP_MISSING)
+    if not (sys.stdin and sys.stdin.isatty()):
+        log("  not a terminal: continuing without yt-dlp")
+        return False
+
+    while True:
+        try:
+            choice = input("  choose [A/B/C]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return False
+        if choice == "a":
+            if download_ytdlp(log=log):
+                return True
+            log("  that did not work; try B or C.")
+        elif choice == "b":
+            try:
+                where = input("  path to yt-dlp: ").strip().strip('"')
+            except (EOFError, KeyboardInterrupt):
+                return False
+            p = Path(where)
+            if p.is_file() and _works(str(p)):
+                cfg = _load_config()
+                cfg["ytdlp_path"] = str(p)
+                _save_config(cfg)
+                _resolved.pop("yt-dlp", None)
+                return True
+            log(f"  {p} does not look like a working yt-dlp")
+        elif choice == "c":
+            return False
+
+
+# --- demucs ---------------------------------------------------------------
+#
+# Deliberately NOT offered as a download. ffmpeg and yt-dlp are single
+# self-contained executables; demucs is a Python library with its own model
+# weights, and there is nothing to fetch that a frozen application could import
+# at runtime. Pretending otherwise would produce a confusing failure, so the
+# message says plainly what the two real options are.
+
+
+def demucs_available() -> bool:
+    try:
+        import demucs  # noqa: F401
+
+        return True
+    except Exception:                                   # noqa: BLE001
+        return False
+
+
+def require_demucs() -> None:
+    if demucs_available():
+        return
+    raise SystemExit(
+        "--separate-audio needs demucs, which is not installed.\n\n"
+        "  Unlike ffmpeg and yt-dlp, demucs is a Python library rather than a\n"
+        "  single executable, so it cannot be fetched into a packaged build at\n"
+        "  runtime. Either:\n"
+        "    * run AKSAL from source, with:  pip install aksal[separate]\n"
+        "    * or leave it off -- measured across eight songs, separation is a\n"
+        "      wash for syllable timing and costs about four times the runtime.")
