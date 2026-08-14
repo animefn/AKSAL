@@ -126,12 +126,6 @@ def validate(segments: list[Segment], min_support: int = 200,
     return ordered
 
 
-def identity_segment(start: float, end: float) -> Segment:
-    """Mode B: the 'reference' IS the video audio, so the mapping is identity."""
-    return Segment(ref_start=start, ref_end=end, ep_start=start, ep_end=end,
-                   offset=0.0, support=0)
-
-
 SONG_CHAPTERS = ("op", "opening", "intro", "avant",
                  "ed", "ending", "credit", "insert", "song")
 

@@ -24,22 +24,6 @@ import torch
 
 from .audio import SR
 
-DEFAULT_MODEL = "vumichien/wav2vec2-large-xlsr-japanese-hiragana"
-
-
-def make_aligner(model: str | None = None, log=print):
-    """Aligner for a model spec, whichever backend it needs.
-
-    `hiragana-asr:` selects the dual-CTC checkpoint, which is a bare state_dict
-    and cannot go through `from_pretrained`. Everything else is a normal
-    Hugging Face CTC model.
-    """
-    from . import dualctc
-
-    if dualctc.is_dualctc(model):
-        return dualctc.DualCTCAligner(model, log=log)
-    return Aligner(model or DEFAULT_MODEL, log=log)
-
 WINDOW_SEC = 20.0
 OVERLAP_SEC = 2.0
 MODEL_STRIDE = 320             # wav2vec2 downsamples 16 kHz by 320 -> 20 ms/frame
@@ -55,97 +39,25 @@ VOWEL_OF = {
 
 
 class Aligner:
-    def __init__(self, model_name: str = DEFAULT_MODEL, log=print):
-        import warnings
+    """Forced alignment against the hiragana dual-CTC acoustic model.
 
-        from transformers import (Wav2Vec2Config, Wav2Vec2ForCTC,
-                                  Wav2Vec2Processor)
-        from transformers.configuration_utils import PretrainedConfig
+    Loading lives in `dualctc`, because the checkpoint is a bare state_dict with
+    no config, tokenizer or preprocessor and all three have to be rebuilt. What
+    stays here is everything that depends only on a vocabulary and a blank
+    index: tokenising, the forced-align call, the skip state, and durations.
+    """
 
-        log(f"  loading acoustic model: {model_name}")
+    def __init__(self, model: str | None = None, log=print):
+        from . import dualctc
 
-        # Many published wav2vec2 checkpoints were uploaded years ago with
-        # `gradient_checkpointing` baked into config.json. It is a *training*
-        # memory/compute tradeoff -- activations are recomputed on the backward
-        # pass, and we never run one -- so it is inert here. transformers still
-        # warns on every load and drops support in v5.
-        #
-        # Two things are needed, because they have different causes:
-        #  * the MODEL is built from a config we clean first, which is the real
-        #    fix and is what keeps this working under v5. Verified to leave the
-        #    weights bit-identical.
-        #  * the PROCESSOR reads config.json itself and gives no way to pass a
-        #    cleaned one, so that message alone is filtered. Scoped to this
-        #    text, so unrelated warnings still surface.
-        with warnings.catch_warnings():
-            warnings.filterwarnings(
-                "ignore", message=".*gradient_checkpointing.*",
-                category=UserWarning)
-            self.processor = Wav2Vec2Processor.from_pretrained(model_name)
-
-            cfg_dict, _ = PretrainedConfig.get_config_dict(model_name)
-            cfg_dict.pop("gradient_checkpointing", None)
-            config = Wav2Vec2Config(**cfg_dict)
-            self.model = Wav2Vec2ForCTC.from_pretrained(model_name,
-                                                        config=config)
-        self.model.eval()
-        self.vocab: dict[str, int] = self.processor.tokenizer.get_vocab()
-        self.log = log
-
-        # Getting this wrong is silently catastrophic: if the real blank index
-        # is occupied by a kana, the aligner treats that kana as "no output".
-        blank = self.processor.tokenizer.pad_token_id
-        if blank is None:
-            for name in ("<pad>", "[PAD]", "<blank>"):
-                if name in self.vocab:
-                    blank = self.vocab[name]
-                    break
-        if blank is None:
-            raise RuntimeError("cannot identify this model's CTC blank token")
-        self.blank = blank
+        dualctc.load_into(self, model or dualctc.DEFAULT_SPEC, log=log)
 
     # --- emissions ------------------------------------------------------------
 
     def emissions(self, y: np.ndarray, cache: Path | None = None) -> torch.Tensor:
-        """Log-probs for the whole signal, windowed and stitched.
+        from . import dualctc
 
-        Depends only on (model, audio) and never on the lyrics, so it is worth
-        caching: iterating on readings or timing heuristics is otherwise
-        dominated by recomputing an identical matrix on CPU.
-        """
-        if cache is not None and cache.exists():
-            self.log(f"  cached emissions: {cache.name}")
-            return torch.load(cache)
-
-        win = int(WINDOW_SEC * SR)
-        hop = int((WINDOW_SEC - OVERLAP_SEC) * SR)
-        trim = int((OVERLAP_SEC / 2) * SR / MODEL_STRIDE)
-
-        pieces: list[torch.Tensor] = []
-        starts = list(range(0, max(len(y) - win + hop, 1), hop))
-        for i, s in enumerate(starts):
-            chunk = y[s:s + win]
-            if len(chunk) < SR // 2:
-                continue
-            inputs = self.processor(chunk, sampling_rate=SR,
-                                    return_tensors="pt", padding=False)
-            with torch.inference_mode():
-                logits = self.model(inputs.input_values).logits[0]
-            lp = torch.log_softmax(logits, dim=-1)
-
-            # Keep the frames furthest from a window seam, where the model had
-            # the most context.
-            head = 0 if i == 0 else trim
-            tail = lp.shape[0] if i == len(starts) - 1 else lp.shape[0] - trim
-            pieces.append(lp[head:tail])
-            self.log(f"\r    emissions {i + 1}/{len(starts)}", end="")
-        self.log("")
-
-        out = torch.cat(pieces, dim=0)
-        if cache is not None:
-            cache.parent.mkdir(parents=True, exist_ok=True)
-            torch.save(out, cache)
-        return out
+        return dualctc.compute_emissions(self, y, cache)
 
     # --- tokenisation ---------------------------------------------------------
 

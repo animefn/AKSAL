@@ -163,8 +163,7 @@ def cmd_phase1(args) -> None:
         log(f"\nsong window: {start:.2f}s .. {end:.2f}s (video timeline)")
 
     # --- 2. audio preprocessing ----------------------------------------------
-    if args.no_preprocess:
-        log("\n--no-preprocess: raw audio, no separation or conditioning")
+    if not args.separate_vocals:
         align_source = source
     else:
         log("\nisolating vocals")
@@ -187,7 +186,7 @@ def cmd_phase1(args) -> None:
     proj = Project(base=base, video=video,
                    mode=mode, align_audio=align_source,
                    reference=args.reference, segments=segments,
-                   model=args.model, conditioned=not args.no_preprocess)
+                   model=args.model, conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
@@ -216,7 +215,7 @@ def cmd_phase1(args) -> None:
 
     # --- 4. align ------------------------------------------------------------
     log("\nalignment")
-    aligner = A.make_aligner(args.model, log=log)
+    aligner = A.Aligner(args.model, log=log)
     y = prepare(align_source, proj.audio_start, proj.audio_dur,
                 condition=proj.conditioned)
     lp = aligner.emissions(y, cache=proj.emissions_cache)
@@ -440,7 +439,7 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
         source, a_start, a_dur = args.video, start, dur
 
     align_source = source
-    if not args.no_preprocess:
+    if args.separate_vocals:
         log("\nisolating vocals")
         if a_start is not None:
             source = audio_mod.extract_wav(
@@ -455,7 +454,7 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
                    mode="reference" if args.reference else "video",
                    align_audio=align_source, reference=args.reference,
                    segments=segments, model=args.model,
-                   conditioned=not args.no_preprocess)
+                   conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = a_start, a_dur
     proj.save()
     return proj
@@ -510,7 +509,7 @@ def cmd_phase2(args) -> None:
         src = timing.from_reference(proj)
     log(f"  timing against {src.describe()}")
 
-    aligner = A.make_aligner(proj.model or A.DEFAULT_MODEL, log=log)
+    aligner = A.Aligner(proj.model or None, log=log)
     y = prepare(src.audio, src.start, src.dur, condition=src.conditioned)
     lp = aligner.emissions(y, cache=proj.sibling(f".emissions.{src.cache_tag}.pt"))
     env = envelope(y)
@@ -749,16 +748,18 @@ def build_parser() -> argparse.ArgumentParser:
     pf.set_defaults(func=cmd_find)
 
     for sp in (p1, p2):
-        sp.add_argument("--model", default=A.DEFAULT_MODEL)
+        sp.add_argument("--model", default=None,
+                        help="override the acoustic model, e.g. "
+                             "hiragana-asr:D:/models/custom.pt")
         sp.add_argument("--device", default="cpu", help="demucs device")
-        sp.add_argument("--no-preprocess", action="store_true",
-                        help="skip vocal separation and signal conditioning, "
-                             "aligning against raw audio. Avoids the demucs "
-                             "dependency. Measured over eight songs against "
-                         "hand-timed karaoke, separation is roughly a wash for "
-                         "syllable timing -- very slightly better on average, "
-                         "worse in the tail -- for about four times the "
-                         "runtime.")
+        sp.add_argument("--separate-audio", dest="separate_vocals",
+                        action="store_true",
+                        help="isolate vocals with demucs before aligning. "
+                             "Off by default: measured over eight songs against "
+                             "hand-timed karaoke it is a wash -- very slightly "
+                             "better on average, worse in the tail -- for about "
+                             "four times the runtime. Worth trying on a noisy "
+                             "mix.")
     return p
 
 
