@@ -5,6 +5,8 @@ model expects, and plenty for fingerprinting.
 """
 from __future__ import annotations
 
+from . import tools
+
 import subprocess
 from pathlib import Path
 
@@ -22,7 +24,7 @@ FRAME_SEC = HOP / SR
 def decode(path: Path, start: float | None = None, dur: float | None = None,
            sr: int = SR) -> np.ndarray:
     """Decode a media file's first audio stream to mono float32 at `sr`."""
-    cmd = ["ffmpeg", "-v", "error"]
+    cmd = [tools.ffmpeg(), "-v", "error"]
     if start is not None:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", str(path)]
@@ -82,7 +84,7 @@ def extract_wav(src: Path, dest: Path, start: float | None = None,
                 dur: float | None = None, sr: int = SR) -> Path:
     """Write a mono wav slice, for tools that need a file rather than an array."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["ffmpeg", "-v", "error", "-y"]
+    cmd = [tools.ffmpeg(), "-v", "error", "-y"]
     if start is not None:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", str(src)]
@@ -124,7 +126,7 @@ def duration(path: Path) -> float | None:
 
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [tools.ffprobe(), "-v", "error", "-show_entries", "format=duration",
              "-of", "csv=p=0", str(path)],
             capture_output=True, text=True, timeout=30).stdout.strip()
         return float(out) if out else None

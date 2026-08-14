@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 from scipy.ndimage import maximum_filter
 
+from . import tools
 from .audio import FRAME_SEC, decode, logspec
 
 # --- constellation parameters -------------------------------------------------
@@ -133,7 +134,7 @@ SONG_CHAPTERS = ("op", "opening", "intro", "avant",
 
 def chapters(path: Path) -> list[tuple[float, float, str]]:
     proc = subprocess.run(
-        ["ffprobe", "-v", "error", "-print_format", "json", "-show_chapters",
+        [tools.ffprobe(), "-v", "error", "-print_format", "json", "-show_chapters",
          str(path)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if proc.returncode != 0:

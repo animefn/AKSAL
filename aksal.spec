@@ -3,7 +3,7 @@ from PyInstaller.utils.hooks import collect_data_files
 from PyInstaller.utils.hooks import collect_submodules
 
 datas = []
-hiddenimports = ['aksal.dualctc', 'aksal.hfmodel', 'aksal.catalog', 'aksal.fetch', 'aksal.discover', 'scipy.special.cython_special']
+hiddenimports = ['aksal.dualctc', 'aksal.hfmodel', 'aksal.catalog', 'aksal.fetch', 'aksal.discover', 'aksal.tools', 'scipy.special.cython_special']
 datas += collect_data_files('unidic_lite')
 datas += collect_data_files('ipadic')
 hiddenimports += collect_submodules('transformers.models.wav2vec2')

@@ -25,6 +25,11 @@ from .project import Project
 
 MAX_HOLD = 2.0          # longest a single unit may be held before it is a rest
 
+# Slack around a --song-start hint when searching for the song. A hint only
+# bounds the search -- the fingerprint match decides the actual timing -- so
+# being a minute out should cost nothing.
+SEARCH_MARGIN = 120.0
+
 # The fastest anyone actually sings. Measured across the test set, sung moras
 # bottom out around 0.10 s; nothing real goes below it for a whole song.
 MIN_SEC_PER_MORA = 0.10
@@ -85,13 +90,6 @@ def parse_time(v: str) -> float:
     raise argparse.ArgumentTypeError(f"bad timestamp: {v!r}")
 
 
-def parse_range(v: str) -> tuple[float, float]:
-    if "-" not in v:
-        raise argparse.ArgumentTypeError("expected START-END, e.g. 18:00-24:00")
-    a, b = v.split("-", 1)
-    return parse_time(a), parse_time(b)
-
-
 # =============================================================================
 # phase 1
 # =============================================================================
@@ -112,14 +110,16 @@ def cmd_phase1(args) -> None:
     # --- 1. decide what audio we align against, and how it maps to the video --
     if mode == "reference":
         source = args.reference
-        # Fingerprinting is cheap; a start hint only narrows the window.
+        # The fingerprint search window is DERIVED from the same two numbers
+        # that describe the song, rather than being described again separately.
+        # A hint only bounds the search; the match itself decides the timing, so
+        # the margin is generous and being a minute out costs nothing.
         if args.song_start is not None:
-            s_start = max(args.song_start - 30.0, 0.0)
-            s_dur = args.search_window
-        elif args.search:
-            s_start, s_dur = args.search[0], args.search[1] - args.search[0]
+            s_start = max(args.song_start - SEARCH_MARGIN, 0.0)
+            s_dur = args.duration + 2 * SEARCH_MARGIN
         else:
-            s_start, s_dur = 0.0, args.search_window
+            s_start, s_dur = 0.0, None          # None: the whole video
+            log("  no --song-start: searching the whole video (slower)")
 
         log("\nlocating song in video (fingerprint)")
         segments = locate.locate_by_fingerprint(source, video, s_start, s_dur,
@@ -128,7 +128,9 @@ def cmd_phase1(args) -> None:
             raise SystemExit(
                 "no match between reference and video.\n"
                 "  - is the reference this show's song?\n"
-                "  - widen with --search 0:00-10:00, or pass --song-start.")
+                "  - is --song-start roughly right? it is searched with two\n"
+                "    minutes of slack either side\n"
+                "  - drop --song-start entirely to search the whole video")
         segments = locate.validate(segments, log=log)
         total = sum(s.ep_end - s.ep_start for s in segments)
         log(f"\n  {len(segments)} chunk(s), {total:.1f}s of song in the video:")
@@ -653,15 +655,12 @@ def build_parser() -> argparse.ArgumentParser:
                          "located automatically and alignment runs on clean "
                          "studio audio -- strongly preferred.")
     p1.add_argument("--song-start", type=parse_time,
-                    help="where the song starts in the video (e.g. 0:36). "
-                         "Required in video-only mode unless the container has "
-                         "chapter markers. Works for EDs too.")
+                    help="roughly where the song starts in the video, e.g. "
+                         "0:36 or 21:30 for an ED. With --reference it just "
+                         "narrows the search and may be a minute out; without "
+                         "one it defines the window and is required.")
     p1.add_argument("--duration", type=float, default=92.0,
                     help="song length in video-only mode (default: 92s)")
-    p1.add_argument("--search", type=parse_range,
-                    help="restrict fingerprint search, e.g. 18:00-24:00 for an ED")
-    p1.add_argument("--search-window", type=float, default=420.0,
-                    help="seconds of video to fingerprint (default: 420)")
     p1.add_argument("--lyrics-format", choices=("auto", "jp", "romaji"),
                     default="auto",
                     help="script of the lyrics file (default: auto-detect). "
@@ -820,6 +819,14 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     args = build_parser().parse_args(argv)
+
+    # Checked once, up front. Every audio step shells out to ffmpeg, so finding
+    # out it is missing forty seconds into a fingerprint search is worse than
+    # being asked about it immediately.
+    from . import tools
+
+    tools.ensure(log=log)
+
     args.func(args)
     return 0
 

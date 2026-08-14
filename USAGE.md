@@ -100,19 +100,20 @@ aksal phase1 --video EP01.mkv --reference song.flac \
     --lyrics "https://www.uta-net.com/song/361192/" -o OP01.lines.ass
 ```
 
-**Endings**: restrict the fingerprint search, or it scans the wrong part of the
-episode.
+**Endings**: the same command with a later hint. It is searched with two minutes
+of slack either side, so being a minute out costs nothing.
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics ed.txt --reference "ed single.flac" \
-    --search 18:00-24:00 -o ED01.lines.ass
+    --song-start 21:30 -o ED01.lines.ass
 ```
 
-**Two episodes in one file**: same thing, a wider window.
+**Two episodes in one file**: same again — the search follows the hint. Omit
+`--song-start` entirely and the whole file is searched, which is only slower.
 
 ```bash
 aksal phase1 --video "EP03-04.mkv" --lyrics op.txt --reference op.flac \
-    --search 0:00-12:00 -o OP.lines.ass
+    --song-start 11:00 -o OP.lines.ass
 ```
 
 ---

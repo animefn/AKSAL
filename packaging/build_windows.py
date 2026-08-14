@@ -49,7 +49,7 @@ HIDDEN = [
     # Reached only through the CLI dispatch table or a lazy import, so a static
     # analyser cannot see them.
     "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
-    "aksal.discover",
+    "aksal.discover", "aksal.tools",
     "scipy.special.cython_special",
 ]
 

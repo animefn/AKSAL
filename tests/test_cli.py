@@ -1,0 +1,77 @@
+"""The CLI surface itself.
+
+These exist because a syntax error sat in cli.py while 208 tests passed: nothing
+in the suite imported it. A module the whole tool runs through was the only one
+with no coverage at all, so any break in it reached the user rather than the
+build.
+
+They assert the SHAPE of the interface, not behaviour -- which flags exist, what
+they default to -- so that removing or renaming one is a deliberate act with a
+test to update, rather than something that quietly breaks a documented command.
+"""
+from __future__ import annotations
+
+import pytest
+
+from aksal.cli import build_parser
+
+
+def flags(command: str) -> dict:
+    sub = build_parser()._subparsers._group_actions[0].choices[command]
+    return {opt: a for a in sub._actions for opt in a.option_strings}
+
+
+def test_the_three_commands_exist():
+    choices = build_parser()._subparsers._group_actions[0].choices
+    assert set(choices) == {"phase1", "phase2", "find"}
+
+
+@pytest.mark.parametrize("flag", [
+    "--video", "--lyrics", "--reference", "--song-start", "--duration",
+    "--insert-romaji", "--lyrics-format", "--model", "--separate-audio",
+    "--no-lrc-hints", "--lead-in", "-o",
+])
+def test_phase1_keeps_its_documented_flags(flag):
+    assert flag in flags("phase1")
+
+
+@pytest.mark.parametrize("flag", ["--video", "--reference", "--group",
+                                 "--tracks", "--model", "--separate-audio",
+                                 "--time-against"])
+def test_phase2_keeps_its_documented_flags(flag):
+    assert flag in flags("phase2")
+
+
+@pytest.mark.parametrize("flag", ["--anime", "--video", "--op", "--ed",
+                                 "--song-start", "--pick", "--yes", "--run"])
+def test_find_keeps_its_documented_flags(flag):
+    assert flag in flags("find")
+
+
+@pytest.mark.parametrize("gone", ["--no-preprocess", "--search",
+                                  "--search-window"])
+def test_removed_flags_stay_removed(gone):
+    """--no-preprocess became the default and was deleted rather than left as
+    an inert alias; --search and --search-window said in a second vocabulary
+    what --song-start and --duration already say."""
+    assert gone not in flags("phase1")
+    assert gone not in flags("phase2")
+
+
+def test_separation_is_off_by_default():
+    """Measured a wash for four times the runtime, so it must be opt-in."""
+    assert flags("phase1")["--separate-audio"].default is False
+
+
+def test_the_model_defaults_to_the_built_in_one():
+    assert flags("phase1")["--model"].default is None
+
+
+def test_song_start_accepts_the_three_timestamp_forms():
+    from aksal.cli import parse_time
+
+    assert parse_time("96.4") == pytest.approx(96.4)
+    assert parse_time("1:36.4") == pytest.approx(96.4)
+    assert parse_time("0:01:36.4") == pytest.approx(96.4)
+    with pytest.raises(Exception):
+        parse_time("nonsense")

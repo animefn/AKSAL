@@ -22,7 +22,7 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import catalog, fetch, lyrics as lyrics_mod
+from . import catalog, fetch, lyrics as lyrics_mod, tools
 
 
 @dataclass
@@ -178,7 +178,7 @@ def _duration_of(path: Path) -> float | None:
 
     try:
         out = subprocess.run(
-            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+            [tools.ffprobe(), "-v", "error", "-show_entries", "format=duration",
              "-of", "csv=p=0", str(path)],
             capture_output=True, text=True, timeout=30).stdout.strip()
         return float(out)
