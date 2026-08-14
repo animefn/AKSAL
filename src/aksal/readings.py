@@ -21,14 +21,29 @@ KANJI = re.compile(r"[一-鿿]")
 KANA_ONLY = re.compile(r"^[ぁ-ゖー\s]*$")
 
 _TAGGER = None
+_TAGGER_ARGS = ""
 
 
 def tagger():
+    """The analyser, pinned to unidic-lite ON PURPOSE.
+
+    `fugashi.Tagger()` with no arguments uses whichever dictionary happens to
+    be installed, preferring full UniDic over unidic-lite. So merely having
+    `unidic` in the environment -- for some unrelated project -- silently
+    changes every reading this tool produces, and changes them for the worse:
+    UniDic 3.1 reads 方 in その方が良い as カタ where unidic-lite reads ホウ.
+
+    Nothing in the output would say so. Pinning it costs one argument and makes
+    the readings a property of AKSAL rather than of the machine it runs on.
+    """
     global _TAGGER
     if _TAGGER is None:
         import fugashi
+        import unidic_lite
 
-        _TAGGER = fugashi.Tagger()
+        global _TAGGER_ARGS
+        _TAGGER_ARGS = f"-d {Path(unidic_lite.DICDIR).as_posix()}"
+        _TAGGER = fugashi.Tagger(_TAGGER_ARGS)
     return _TAGGER
 
 

@@ -64,3 +64,19 @@ def test_normalisation_never_touches_the_romaji_display_path():
     line = "tsudzukete PURAIDO"
     _units, _owner, cells = readings.units_and_romaji(line, {}, "romaji")
     assert "".join(cells) == line
+
+
+def test_the_dictionary_is_pinned_not_inherited():
+    """Readings must be a property of AKSAL, not of the machine it runs on.
+
+    fugashi.Tagger() with no arguments takes whichever dictionary happens to be
+    installed, preferring full UniDic over unidic-lite -- and the two disagree:
+    UniDic 3.1 reads 方 here as カタ, unidic-lite as ホウ. A user with `unidic`
+    installed for an unrelated project would silently get different, worse
+    readings from this tool. This caught exactly that during development.
+    """
+    import unidic_lite
+
+    readings.tagger()                                  # force construction
+    assert unidic_lite.DICDIR.replace("\\", "/") in readings._TAGGER_ARGS
+    assert reading("その方が良い") == "その ほう が よい"
