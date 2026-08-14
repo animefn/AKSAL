@@ -51,8 +51,65 @@ def strip_ruby(line: str) -> str:
     return RUBY.sub(lambda m: m.group(1), line)
 
 
+# Ideographic variation selectors pick a GLYPH, never a sound, and the old-new
+# kanji mapping emits them for characters that have registered variants: 辿
+# comes back as 辿 + U+E0100. Left in place the selector becomes a token of its
+# own AND strips the kanji of its reading, so a correctly-read word is
+# destroyed -- silently, which is precisely the failure this normalisation
+# exists to prevent.
+_VARIATION_SELECTOR = re.compile(r"[︀-️󠄀-󠇯]")
+
+_YOSINA = None
+_YOSINA_TRIED = False
+
+
+def _character_normaliser():
+    """Old kanji forms and stray character variants, or None if yosina is absent.
+
+    These fail SILENTLY, which is why they are worth a dependency. A lyric
+    sheet written with old forms gives 戀 the reading レン instead of コイ, and
+    孃 no reading at all -- so the aligner is handed a character it cannot
+    pronounce and simply hunts for sounds nobody sang. Nothing in the output
+    looks wrong.
+
+    Only the transformations that change what is SUNG are enabled. Width and
+    spacing conversions are left to jaconv, and nothing here rewrites kana into
+    other kana: the analyser's readings must stay the singer's readings.
+    """
+    global _YOSINA, _YOSINA_TRIED
+    if not _YOSINA_TRIED:
+        _YOSINA_TRIED = True
+        try:
+            import yosina
+
+            _YOSINA = yosina.make_transliterator(
+                yosina.TransliterationRecipe(
+                    kanji_old_new=True,
+                    replace_combined_characters=True,
+                    replace_ideographic_annotations=True,
+                    replace_suspicious_hyphens_to_prolonged_sound_marks=True,
+                ))
+        except Exception:                   # pragma: no cover - optional
+            _YOSINA = None
+    return _YOSINA
+
+
 def normalise_surface(line: str) -> str:
-    """Full-width spaces are phrase separators in lyric sheets, not characters."""
+    """Canonicalise a lyric line before it is analysed.
+
+    Order matters. Width and combining marks are folded first, so that a
+    half-width or decomposed character is a real character by the time anything
+    else looks at it -- か + U+3099 is otherwise split into two units and
+    aligned as two sounds. Old kanji forms are resolved next, then ruby, then
+    the full-width spaces lyric sheets use as phrase separators.
+
+    This is the ANALYSED text only. Romaji input is displayed from the raw line
+    it was read from, so none of this can alter what the user typed.
+    """
+    line = jaconv.normalize(line)
+    tr = _character_normaliser()
+    if tr is not None:
+        line = _VARIATION_SELECTOR.sub("", tr(line))
     return strip_ruby(line.replace("　", " ")).strip()
 
 

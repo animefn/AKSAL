@@ -194,6 +194,13 @@ OP01.kara.jp.ass      <- phase 2 output
 OP01.kara.romaji.ass
 ```
 
+Lyric sheets are normalised before analysis: half-width katakana, full-width
+latin, combining marks and old kanji forms are all folded first. Those failed
+**silently** -- 孃 has no reading at all in the analyser's dictionary, so the
+aligner was handed a character it could not pronounce and nothing in the output
+looked wrong. Your romaji is untouched by this: the romaji track is built from
+the raw line, not the normalised one.
+
 **`OP01.readings.tsv` is worth opening.** Fix any row that is flagged, and any
 reading the singer does not use — analysers do not know that 永遠 is often sung
 とわ. **Spaces in the reading column mark word breaks**, and they set where the

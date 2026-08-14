@@ -46,6 +46,11 @@ dependencies = [
     # but splits set-phrase compounds and gets their READING wrong; ipadic
     # knows many of them as single entries.
     "ipadic==1.0.0",
+    # Old kanji forms and combining marks. Tiny (648 KB, no dependencies of its
+    # own) and it fixes a class of SILENT failure: 孃 has no reading in
+    # unidic-lite at all, so the aligner receives a character it cannot
+    # pronounce and nothing in the output looks wrong.
+    "yosina==3.0.0",
     "jaconv==0.4.1",
 ]
 

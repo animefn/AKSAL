@@ -7,7 +7,6 @@
 #
 #   pip install -r requirements.lock \
 #       --extra-index-url https://download.pytorch.org/whl/cpu
-
 altgraph==0.17.5
 certifi==2025.4.26
 cffi==1.17.1
@@ -36,8 +35,8 @@ pluggy==1.5.0
 pycparser==2.21
 pyflakes==3.4.0
 pygments==2.19.1
-pyinstaller==6.22.0
 pyinstaller-hooks-contrib==2026.6
+pyinstaller==6.22.0
 pytest==9.1.1
 pywin32-ctypes==0.2.3
 pyyaml==6.0.3
@@ -57,3 +56,4 @@ transformers==4.57.3
 typing-extensions==4.16.0
 unidic-lite==1.0.8
 urllib3==2.3.0
+yosina==3.0.0
