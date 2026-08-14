@@ -35,12 +35,15 @@ jobs:
           python-version: "3.13"
           cache: pip
 
-      - name: Install (CPU torch only)
+      - name: Install (locked, CPU torch)
+        # requirements.lock pins the whole tree, so a build months from now
+        # installs what today's build did rather than what the resolver picks.
+        # The CPU index is still needed or pip fetches several GB of unused CUDA.
         run: |
           python -m pip install --upgrade pip
-          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
-          pip install -e ".[dev]"
-          pip install pyinstaller
+          pip install -r requirements.lock --extra-index-url https://download.pytorch.org/whl/cpu
+          pip install --no-deps -e .
+          pip install pyinstaller==6.22.0
 
       # Never ship something the tests have not passed. This is the whole reason
       # the build is not simply run by hand.
