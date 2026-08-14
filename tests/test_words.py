@@ -614,10 +614,17 @@ def test_a_kana_vocabulary_is_accepted():
 def test_a_mixed_vocabulary_is_judged_on_the_kana_share():
     from aksal import hfmodel
 
-    mixed = {c: i for i, c in enumerate("あいうえお日本語漢字")}
+    # Two kana in eight tokens: a model that mostly writes kanji, which is
+    # exactly the shape of a general ASR checkpoint.
+    mixed = {c: i for i, c in enumerate("あい日本語漢字森")}
     ok, share = hfmodel.looks_like_kana_vocab(mixed)
     assert not ok
-    assert 0.5 > share > 0.4
+    assert share == pytest.approx(2 / 8)
+
+    # Just over the line the other way: still accepted.
+    ok2, share2 = hfmodel.looks_like_kana_vocab(
+        {c: i for i, c in enumerate("あいうえお日本語")})
+    assert ok2 and share2 > 0.5
 
 
 def test_an_empty_vocabulary_does_not_crash():
