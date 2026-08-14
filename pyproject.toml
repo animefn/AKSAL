@@ -17,23 +17,36 @@ classifiers = [
     "Topic :: Multimedia :: Sound/Audio :: Analysis",
     "Topic :: Text Processing :: Linguistic",
 ]
+# Pinned exactly, because this is an application rather than a library: nothing
+# depends on AKSAL, so there is no one for a loose range to be compatible WITH,
+# and the accuracy figures in the README were measured against these versions.
+# A release built six months from now should behave the way this one does.
+#
+# torch and torchaudio must come from the CPU index or pip installs several GB
+# of CUDA that is never used:
+#
+#     pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+#     pip install -e .
+#
+# The +cpu local version is deliberately NOT part of the pin -- it would make
+# the manifest unsatisfiable on any platform without a CPU-suffixed wheel.
 dependencies = [
-    "numpy>=1.26",
-    "scipy>=1.11",
-    "soundfile>=0.12",
-    "torch>=2.2",
-    "torchaudio>=2.2",
-    "transformers>=4.40",
+    "numpy==2.2.6",
+    "scipy==1.16.3",
+    "soundfile==0.13.1",
+    "torch==2.13.0",
+    "torchaudio==2.11.0",
+    "transformers==4.57.3",
     # Imported directly to fetch the acoustic model on first run. It arrives
     # via transformers anyway, but a direct import belongs in the manifest.
-    "huggingface-hub>=0.23",
-    "fugashi>=1.3",
-    "unidic-lite>=1.0.8",
+    "huggingface-hub==0.36.0",
+    "fugashi==1.5.2",
+    "unidic-lite==1.0.8",
     # A second opinion for compound nouns. unidic-lite has the better grammar,
     # but splits set-phrase compounds and gets their READING wrong; ipadic
     # knows many of them as single entries.
-    "ipadic>=1.0.0",
-    "jaconv>=0.3",
+    "ipadic==1.0.0",
+    "jaconv==0.4.1",
 ]
 
 [project.optional-dependencies]
@@ -41,11 +54,14 @@ dependencies = [
 # is a wash for syllable timing -- marginally better on average, worse in the
 # tail -- for about four times the runtime, so it is opt-in rather than
 # required. It also pulls in a large dependency tree of its own.
-separate = ["demucs>=4.0"]
-# Only `aksal find` uses it, and only to fetch a reference track. A packaged
-# build can download the standalone binary at runtime instead.
-fetch = ["yt-dlp>=2024.1.1"]
-dev = ["pytest>=8.0"]
+separate = ["demucs==4.1.0"]
+# yt-dlp is the ONE dependency deliberately left unpinned. It breaks against
+# YouTube regularly and is fixed by updating, so a pin here would guarantee a
+# stale copy. The tool never auto-updates it either -- changing itself mid-run
+# would change results without anyone asking -- but it should be free to be
+# current when installed.
+fetch = ["yt-dlp"]
+dev = ["pytest==9.1.1", "pyflakes", "pyinstaller==6.22.0"]
 all = ["aksal[separate,fetch]"]
 
 [project.urls]
