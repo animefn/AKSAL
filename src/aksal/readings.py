@@ -375,10 +375,22 @@ def resolve_words(surface: str, overrides: dict[str, str],
         parts = overrides[key].split()
         return parts if parts else [overrides[key]]
     if source == "romaji":
-        words = [w for w in key.split() if w] or [key]
-        # A foreign word is left in latin script, which `moras.split` keeps as a
-        # single unit. Transliterating it would invent moras nobody sings.
-        return [w if is_foreign(w) else romaji_to_kana(w) for w in words]
+        from . import moras
+
+        words, _gaps = moras.romaji_tokens(key)
+        if not words:
+            return [key]
+        out = []
+        for word in words:
+            core, tail = moras.strip_trailing_punctuation(word)
+            # A foreign word is left in latin script, which `moras.split` keeps
+            # as a single unit. Transliterating it would invent moras nobody
+            # sings. Trailing punctuation rides along on the kana so it cannot
+            # become an empty word, which would be dropped silently and take
+            # the user's character with it.
+            kana = core if is_foreign(core) else (romaji_to_kana(core) or core)
+            out.append(kana + "".join(c for c in tail if not c.isspace()))
+        return out
     return [kana for _surface, kana in analyse_words(key)]
 
 

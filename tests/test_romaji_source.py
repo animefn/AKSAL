@@ -47,6 +47,27 @@ def test_cells_stay_one_per_mora():
     assert got is not None and len(got) == len(units)
 
 
+def test_punctuation_joins_the_word_before_it():
+    # Not its own cell: a \k cell has a duration, and punctuation is not sung.
+    assert cells("stop !") == ["stop !"]
+    assert cells("yeah...") == ["yeah..."]
+
+
+def test_punctuation_is_not_a_word_for_group_word():
+    line = "Hey ... GO !"
+    words = readings.resolve_words(line, {}, "romaji")
+    _units, owner = moras.split_words(words)
+    ro = romaji.line_sourced(line, words, owner)
+    spans = moras.group_by_word(owner)
+    assert ["".join(ro[a:b + 1]) for a, b in spans] == ["Hey ... ", "GO !"]
+
+
+def test_brackets_do_not_defeat_the_lineup_check():
+    # 「 and 」 attach to different sides of a cell depending on which path
+    # built it; comparing only what is pronounced keeps the line verbatim.
+    assert "".join(cells("「kyou」")) == "「kyou」"
+
+
 def test_declines_when_the_word_count_disagrees():
     # An override defines its own word split, so the source line no longer
     # describes these words -- better to fall back than to attach the user's

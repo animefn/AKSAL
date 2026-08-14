@@ -286,9 +286,7 @@ def line_sourced(source_line: str, words: list[str],
     # Keep the separators, not just the words: the gap between two words is
     # the user's text too, and re-joining on a single space is one more silent
     # rewrite of what they typed.
-    tokens = re.split(r"(\s+)", source_line.strip())
-    src_words = tokens[0::2]
-    gaps = tokens[1::2] + [""]
+    src_words, gaps = moras.romaji_tokens(source_line)
     if len(src_words) != len(words):
         return None
 
@@ -299,7 +297,15 @@ def line_sourced(source_line: str, words: list[str],
             parts = [src_word]              # foreign run, kept whole
         else:
             grouped = moras.split_pairs(to_kana_spans(src_word))
-            if [k for k, _s in grouped] != want:
+            # Compare only what is pronounced. Punctuation rides along on
+            # whichever cell precedes it and is not a mora, so 「kyou」 must not
+            # be rejected merely because the bracket landed on one side here and
+            # the other side there.
+            def bare(unit: str) -> str:
+                return "".join(c for c in unit
+                               if not moras.is_punctuation(c))
+
+            if [bare(k) for k, _s in grouped] != [bare(x) for x in want]:
                 return None
             parts = [s for _k, s in grouped]
         cells.extend(parts)

@@ -18,6 +18,8 @@ it actually is.
 """
 from __future__ import annotations
 
+import re
+
 SMALL_ATTACH = set("ゃゅょぁぃぅぇぉゎ")
 PROLONG = set("ーｰ―‐")
 SOKUON = set("っッ")
@@ -72,7 +74,7 @@ def split_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
                 latin_run = True
             continue
         latin_run = False
-        if (ch in SMALL_ATTACH or ch in PROLONG) and units:
+        if (ch in SMALL_ATTACH or ch in PROLONG or is_punctuation(ch)) and units:
             units[-1][0] += ch
             merge(src)
             continue
@@ -92,6 +94,58 @@ def group_by_word(owner: list[int]) -> list[tuple[int, int]]:
 
 
 LATIN = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'’0123456789")
+
+
+
+def is_punctuation(ch: str) -> bool:
+    r"""Characters that are written but not sung.
+
+    They must never take a unit of their own: a `\k` cell has a duration, so
+    "yeah..." splitting into yeah/./././ hands three syllables' worth of time to
+    three dots and drags the highlight behind the singer. They are kept -- the
+    user's text comes back whole -- just carried inside the neighbouring cell.
+
+    Digits are excluded deliberately: those ARE read aloud.
+    """
+    return not ch.isalnum() and not ch.isspace()
+
+
+
+def romaji_tokens(text: str) -> tuple[list[str], list[str]]:
+    r"""Split a romaji line into words, and the gaps that followed them.
+
+    A token of pure punctuation is merged into the word BEFORE it, taking its
+    separating space along -- "stop !" is one word, not two. Punctuation is not
+    sung, so making it a word of its own would hand it a share of the line's
+    time and, under --group word, invent a word the user never wrote.
+
+    Everything the user typed survives: the gaps are returned rather than
+    discarded, so the caller reassembles the line exactly as written, repeated
+    spaces and all.
+    """
+    parts = re.split(r"(\s+)", text.strip())
+    words: list[str] = []
+    gaps: list[str] = []
+    for i in range(0, len(parts), 2):
+        tok = parts[i]
+        gap = parts[i + 1] if i + 1 < len(parts) else ""
+        if not tok:
+            continue
+        if words and all(is_punctuation(c) for c in tok):
+            words[-1] += gaps[-1] + tok
+            gaps[-1] = gap
+            continue
+        words.append(tok)
+        gaps.append(gap)
+    return words, gaps
+
+
+def strip_trailing_punctuation(word: str) -> tuple[str, str]:
+    """Split a word into (what is pronounced, what merely follows it)."""
+    cut = len(word)
+    while cut and (is_punctuation(word[cut - 1]) or word[cut - 1].isspace()):
+        cut -= 1
+    return word[:cut], word[cut:]
 
 
 def split(kana: str) -> list[str]:
@@ -128,6 +182,9 @@ def split(kana: str) -> list[str]:
             continue
         if ch in PROLONG and units:
             units[-1] += ch
+            continue
+        if is_punctuation(ch) and units:
+            units[-1] += ch                 # kept, but never its own cell
             continue
         units.append("っ" if ch in SOKUON else ch)
     return units
