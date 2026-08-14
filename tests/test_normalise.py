@@ -38,9 +38,10 @@ def test_fullwidth_latin_and_digits_are_folded():
 def test_variation_selectors_are_removed():
     """The old-new kanji mapping emits IVS selectors for some characters.
 
-    Left in, the selector becomes a karaoke cell of its own AND strips the
-    kanji of its reading -- so a word that was correct before normalisation
-    comes out broken. A variation selector picks a glyph, never a sound.
+    Left in, the selector becomes a karaoke cell of its own AND splits the word
+    around itself, so the kanji is analysed alone and loses its reading. Over
+    the test corpus that affects five kanji across about twelve word instances.
+    A variation selector picks a glyph, never a sound.
     """
     for word, want in (("辿り着いた", "たどりついた"),
                        ("疼く", "うずく"),

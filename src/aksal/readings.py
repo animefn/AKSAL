@@ -68,10 +68,18 @@ def strip_ruby(line: str) -> str:
 
 # Ideographic variation selectors pick a GLYPH, never a sound, and the old-new
 # kanji mapping emits them for characters that have registered variants: 辿
-# comes back as 辿 + U+E0100. Left in place the selector becomes a token of its
-# own AND strips the kanji of its reading, so a correctly-read word is
-# destroyed -- silently, which is precisely the failure this normalisation
-# exists to prevent.
+# comes back as 辿 + U+E0100.
+#
+# Left in place the selector becomes a token of its own AND splits the word
+# around itself, so the kanji is analysed alone and loses its reading. Measured
+# over the 229 lyric lines of the test corpus, without this five kanji are
+# affected across about twelve word instances: 辿, 疼 and 逢 lose their reading
+# entirely, while 出, 嘲 and the 着く forms keep theirs but gain a spurious
+# karaoke cell. The split also leaves debris -- り, く, って and friends
+# analysed as standalone words.
+#
+# All of it silent, which is precisely the failure this normalisation exists to
+# prevent.
 _VARIATION_SELECTOR = re.compile(r"[︀-️󠄀-󠇯]")
 
 _YOSINA = None
