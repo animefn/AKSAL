@@ -201,6 +201,22 @@ aligner was handed a character it could not pronounce and nothing in the output
 looked wrong. Your romaji is untouched by this: the romaji track is built from
 the raw line, not the normalised one.
 
+Set phrases are kept whole. The analyser emits *short unit words* -- it
+segments grammar, so `共に` comes back as two words and `どうにか` as three -- but
+every dictionary lists those as single entries, so a short list rejoins them:
+`tomoni`, `dounika`, `sonnani`, `dareka`, `itsumo`, `dakara`, `dakedo`. Word
+boundaries move; the syllables and the `\k` values do not.
+
+That list is a convention rather than a fact, so it is editable. Put
+`aksal.phrases.tsv` beside the executable (or in `~/.aksal`), two tab-separated
+columns -- the phrase, and a reading only when concatenating the parts would be
+wrong. `DELETE` in the second column removes a built-in entry:
+
+```
+本当に
+誰か	DELETE
+```
+
 **`OP01.readings.tsv` is worth opening.** Fix any row that is flagged, and any
 reading the singer does not use — analysers do not know that 永遠 is often sung
 とわ. **Spaces in the reading column mark word breaks**, and they set where the

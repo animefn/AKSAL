@@ -43,6 +43,11 @@ def _home() -> Path:
     return Path.home() / ".aksal"
 
 
+def home() -> Path:
+    """Public alias: other modules keep user-editable files here too."""
+    return _home()
+
+
 def _config_path() -> Path:
     return _home() / "aksal.config.json"
 

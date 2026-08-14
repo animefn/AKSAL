@@ -190,7 +190,7 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
         # Compounds are repaired per chunk, so an explicit space in the source
         # still stops a merge from crossing it.
         repaired = repair_compounds(out[chunk_start:])
-        out[chunk_start:] = repaired
+        out[chunk_start:] = join_phrases(repaired)
 
     return [(surface, kana) for surface, kana, _pos in out]
 
@@ -245,6 +245,118 @@ def compound_reading(surface: str) -> str | None:
         return None
     return jaconv.kata2hira(reading)
 
+
+
+# =============================================================================
+# Lexicalised phrases
+# =============================================================================
+
+# UniDic emits SHORT unit words: it segments grammar, and grammatically 共に is
+# 共 + に and どうにか is どう + に + か. Correct as grammar, wrong as words --
+# every dictionary lists these as single entries, and a reader (and ichi.moe)
+# treats them as one.
+#
+# An explicit list, NOT a rule. The rule was tried: "pronoun + か/も joins" cost
+# five new run-ons, because no part-of-speech pattern separates いつも (a
+# lexicalised adverb) from どれも (a pronoun and a particle). They are
+# grammatically identical and lexically different, so only a lexicon can tell
+# them apart.
+#
+# The value is an explicit reading, or None to concatenate the parts'. Mostly
+# None -- but 何 is read ナン by the analyser, so 何か and 何も would come out
+# nanka and nanmo rather than nanika and nanimo.
+PHRASES: dict[str, str | None] = {
+    # Indefinites. Deliberately NOT 君も / どれも / どこも: those are a noun and
+    # a particle, not a word.
+    "誰か": None, "何か": "なにか", "何も": "なにも",
+    "いつか": None, "いつも": None, "どこか": None, "なぜか": None,
+    # Adverbs written as particle strings.
+    "どうにか": None, "どんなに": None, "そんなに": None,
+    "こんなに": None, "あんなに": None,
+    # Adverbial に-forms that are lexicalised. 本当に / 確かに / 同時に are
+    # deliberately absent -- those read naturally as noun + に. Note UniDic
+    # already joins 既に while splitting 共に, so it is not principled here
+    # either; this is lexicon coverage, not grammar.
+    "共に": None, "直ぐに": None, "すぐに": None,
+    # Conjunctions. Split, these come out "da tte", "da kedo", "da kara".
+    "だって": None, "だけど": None, "だから": None,
+    "けれども": None, "それでも": None,
+}
+
+MAX_PHRASE_WORDS = 5
+
+_USER_PHRASES_LOADED = False
+
+
+def load_user_phrases() -> Path | None:
+    """Merge `aksal.phrases.tsv` from the install directory, if present.
+
+    Which sequences count as one word is a CONVENTION, not a fact, so the
+    built-in list is a starting point rather than an answer -- 本当に is left
+    split here and someone will reasonably want it joined. Two tab-separated
+    columns: the surface, and optionally the reading when concatenating the
+    parts' readings would be wrong (as it is for 何か).
+
+    An empty second column means "concatenate", and a row with the surface
+    alone and the word DELETE removes a built-in entry, so the list can be
+    trimmed as well as extended.
+    """
+    global _USER_PHRASES_LOADED
+    if _USER_PHRASES_LOADED:
+        return None
+    _USER_PHRASES_LOADED = True
+    from . import tools
+
+    path = tools.home() / "aksal.phrases.tsv"
+    if not path.exists():
+        return None
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        surface = parts[0].strip()
+        value = parts[1].strip() if len(parts) > 1 else ""
+        if not surface:
+            continue
+        if value.upper() == "DELETE":
+            PHRASES.pop(surface, None)
+        else:
+            PHRASES[surface] = jaconv.kata2hira(value) if value else None
+    return path
+
+
+def join_phrases(words: list[tuple[str, str, str]]
+                 ) -> list[tuple[str, str, str]]:
+    """Merge consecutive words that form one lexicalised phrase.
+
+    Longest match first, so どんなに wins over any shorter prefix of itself.
+    Runs after `repair_compounds` and inside a chunk, so an explicit space in
+    the lyric sheet still stops a merge from crossing it -- the writer's
+    spacing outranks this list.
+
+    The merged word keeps the analyser's part of speech for its FIRST element.
+    Nothing downstream inspects it after this point, and inventing a tag would
+    be a claim this function is not entitled to make.
+    """
+    load_user_phrases()
+    out: list[tuple[str, str, str]] = []
+    i = 0
+    while i < len(words):
+        merged = None
+        for n in range(min(MAX_PHRASE_WORDS, len(words) - i), 1, -1):
+            surface = "".join(w[0] for w in words[i:i + n])
+            if surface in PHRASES:
+                reading = PHRASES[surface] or "".join(w[1] for w in words[i:i + n])
+                merged = (surface, reading, words[i][2])
+                i += n
+                break
+        if merged is not None:
+            out.append(merged)
+        else:
+            out.append(words[i])
+            i += 1
+    return out
 
 def repair_compounds(words: list[tuple[str, str, str]]
                      ) -> list[tuple[str, str, str]]:
