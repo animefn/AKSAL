@@ -32,10 +32,15 @@ Romaji lines work too and are **auto-detected** — no flag:
 aksal phase2 romaji-lines.ass --video EP01.mkv
 ```
 
-With romaji input, **your spacing is authoritative**: no morphological analyser
-runs at all, which removes the single largest error source. The kana track is
-named `.kara.kana.ass` rather than `.jp.ass`, because reconstructed kana is not
-the original orthography.
+With romaji input, **your text is authoritative and comes back verbatim** --
+spacing, spelling and capitalisation alike. No morphological analyser runs at
+all, which removes the single largest error source, and the romaji track is
+built from the characters you typed rather than re-romanised from the kana. So
+`tsudzukete` stays `tsudzukete`, not `tsuzukete`; `PURAIDO` keeps its capitals.
+
+The kana track is named `.kara.kana.ass` rather than `.jp.ass`, because
+reconstructed kana is not the original orthography -- there is no kanji to
+recover.
 
 If you also have the official single, time against it instead of the broadcast:
 

@@ -40,6 +40,46 @@ def split_words(words: list[str]) -> tuple[list[str], list[int]]:
     return units, owner
 
 
+def split_pairs(pairs: list[tuple[str, str]]) -> list[tuple[str, str]]:
+    """`split`, carrying each kana's source text along with it.
+
+    Mirrors `split` rule for rule -- it must, or the cells built from the user's
+    own spelling would not line up one-to-one with the cells built from kana,
+    and the karaoke would be silently misattributed.
+
+    Input is (kana, source) pairs from `romaji.to_kana_spans`; output is
+    (unit_kana, unit_source) where a unit's source is the concatenation of every
+    kana's source that merged into it. So "kitte" -> き='ki', っ='t', て='te'.
+    """
+    units: list[list[str]] = []
+    latin_run = False
+
+    def merge(src: str) -> None:
+        units[-1][1] += src
+
+    for ch, src in pairs:
+        if ch.isspace():
+            latin_run = False
+            if units:
+                merge(src)
+            continue
+        if ch in LATIN:
+            if latin_run:
+                units[-1][0] += ch
+                merge(src)
+            else:
+                units.append([ch, src])
+                latin_run = True
+            continue
+        latin_run = False
+        if (ch in SMALL_ATTACH or ch in PROLONG) and units:
+            units[-1][0] += ch
+            merge(src)
+            continue
+        units.append(["っ" if ch in SOKUON else ch, src])
+    return [(k, s) for k, s in units]
+
+
 def group_by_word(owner: list[int]) -> list[tuple[int, int]]:
     """Inclusive (first, last) unit index for each word."""
     spans: list[tuple[int, int]] = []

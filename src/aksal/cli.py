@@ -297,7 +297,10 @@ def cmd_phase1(args) -> None:
         for line_no, surface, _reading in rows:
             words = readings.resolve_words(surface, overrides, source)
             units, owner = moras.split_words(words)
-            romaji_of[line_no] = "".join(romaji.line_spaced(units, owner))
+            cells = (romaji.line_sourced(readings.normalise_surface(surface), words, owner)
+                     if source == "romaji" else None)
+            romaji_of[line_no] = "".join(
+                cells if cells is not None else romaji.line_spaced(units, owner))
         log(f"  romaji hints on {len(romaji_of)} line(s)")
 
     events, cut, straddled = [], [], []
@@ -569,7 +572,13 @@ def cmd_phase2(args) -> None:
         v_starts = [src.to_video(s) for s in starts]
 
         jp_cells = units
-        ro_cells = romaji.line_spaced(units, owner)
+        # With a romaji sheet, give the user's own spelling back rather than
+        # our romanisation of the kana we derived from it.
+        ro_cells = None
+        if proj.lyrics_source == "romaji":
+            ro_cells = romaji.line_sourced(readings.normalise_surface(surface), words, owner)
+        if ro_cells is None:
+            ro_cells = romaji.line_spaced(units, owner)
         cell_starts = v_starts
 
         if args.group == "word":
@@ -577,9 +586,10 @@ def cmd_phase2(args) -> None:
             # still lands on the syllable that begins it.
             spans = moras.group_by_word(owner)
             jp_cells = ["".join(units[a:b + 1]) for a, b in spans]
-            ro_cells = ["".join(romaji.line(units[a:b + 1]))
-                        + (" " if b + 1 < len(units) else "")
-                        for a, b in spans]
+            # Join the per-mora cells rather than re-romanising the units: with
+            # a romaji sheet those cells carry the user's own spelling, and
+            # going back to `romaji.line` would discard it here only.
+            ro_cells = ["".join(ro_cells[a:b + 1]) for a, b in spans]
             cell_starts = [v_starts[a] for a, _ in spans]
 
         # Both tracks tile from ONE list of boundaries, so their splits match by

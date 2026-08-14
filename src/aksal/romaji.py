@@ -191,57 +191,71 @@ VOWEL_SET = set("aiueo")
 
 
 def to_kana(text: str) -> str:
-    """Parse a romaji line into hiragana.
+    """Parse a romaji line into hiragana."""
+    return "".join(k for k, _src in to_kana_spans(text))
 
-    Longest-match, with the three constructions that are not a plain table
-    lookup: gemination (doubled consonant, plus Hepburn's "tch"), syllabic n,
-    and pass-through for anything unrecognised.
 
-    Note the deliberate asymmetry with `unit()`: "kaa" comes back as か+あ, not
-    かー. Those are acoustically identical and split into the same two cells, so
-    it does not affect timing -- only how the kana would look if displayed.
+def to_kana_spans(text: str) -> list[tuple[str, str]]:
+    """Parse romaji into (kana, the characters that produced it) pairs.
+
+    The spans are what lets the user's OWN spelling survive the round trip. A
+    romaji sheet goes to kana to be aligned, and re-romanising the kana
+    afterwards silently rewrites the author's text: "dzu" becomes "zu",
+    "PURAIDO" becomes "puraido". Someone who typed the romaji expects to get it
+    back.
+
+    Positional, not keyed. A lookup table from kana to romaji cannot express two
+    spellings of the same sound in one file, and adding occurrence indexes to it
+    only rebuilds position badly -- word three of the input is word three of the
+    output, and that is the whole mapping.
+
+    Characters that produce no kana -- punctuation, stray spaces -- are absorbed
+    into the following span rather than dropped, so the text reassembles exactly.
     """
-    s = text.lower().strip()
-    out: list[str] = []
+    s = text.lower()
+    out: list[tuple[str, str]] = []
     i = 0
+    start = 0                       # where the pending span began in `text`
+
+    def emit(kana: str, consumed: int) -> None:
+        nonlocal i, start
+        out.append((kana, text[start:i + consumed]))
+        i += consumed
+        start = i
+
     while i < len(s):
         ch = s[i]
         if not ch.isalpha() and ch != "'":
-            i += 1
+            i += 1                  # keep `start` put: it joins the next span
             continue
 
-        # Hepburn geminates ch as "tch"; everything else doubles its consonant.
         if s.startswith("tch", i):
-            out.append("っ")
-            i += 1
+            emit("っ", 1)
             continue
         if ch not in VOWEL_SET and ch != "n" and i + 1 < len(s) and s[i + 1] == ch:
-            out.append("っ")
-            i += 1
+            emit("っ", 1)
             continue
 
-        # Syllabic n: "n" not followed by a vowel or y, or explicitly n'.
         if ch == "n":
             nxt = s[i + 1] if i + 1 < len(s) else ""
             if nxt == "'":
-                out.append("ん")
-                i += 2
+                emit("ん", 2)
                 continue
             if nxt not in VOWEL_SET and nxt != "y":
-                out.append("ん")
-                i += 1
+                emit("ん", 1)
                 continue
 
         for length in (3, 2, 1):
-            frag = s[i:i + length]
-            if frag in REVERSE:
-                out.append(REVERSE[frag])
-                i += length
+            if s[i:i + length] in REVERSE:
+                emit(REVERSE[s[i:i + length]], length)
                 break
         else:
-            out.append(ch)          # unknown: keep it so it shows up as missing
-            i += 1
-    return "".join(out)
+            emit(ch, 1)             # unknown: kept so it shows up as missing
+
+    if start < len(text) and out:   # trailing punctuation joins the last span
+        kana, src = out[-1]
+        out[-1] = (kana, src + text[start:])
+    return out
 
 
 def looks_like_romaji(text: str, threshold: float = 0.6) -> bool:
@@ -251,3 +265,50 @@ def looks_like_romaji(text: str, threshold: float = 0.6) -> bool:
         return False
     latin = sum(1 for c in letters if c.isascii())
     return latin / len(letters) >= threshold
+
+def line_sourced(source_line: str, words: list[str],
+                 owner: list[int]) -> list[str] | None:
+    """Romanise a line as the USER wrote it, not as we would spell it.
+
+    Romaji input is converted to kana to be aligned, and re-romanising the kana
+    afterwards quietly rewrites the author's text -- "dzu" comes back "zu",
+    "PURAIDO" comes back "puraido", doubled spaces collapse. Someone who typed
+    romaji did that work on purpose and expects it back.
+
+    Returns None -- caller falls back to `line_spaced` -- whenever the source
+    does not demonstrably line up with the kana it produced: a different word
+    count, or a word whose spans do not regroup into the same moras. Better a
+    correctly-spelled cell in our romanisation than the user's text attached to
+    the wrong syllable.
+    """
+    from . import moras          # local: moras imports romaji at module level
+
+    # Keep the separators, not just the words: the gap between two words is
+    # the user's text too, and re-joining on a single space is one more silent
+    # rewrite of what they typed.
+    tokens = re.split(r"(\s+)", source_line.strip())
+    src_words = tokens[0::2]
+    gaps = tokens[1::2] + [""]
+    if len(src_words) != len(words):
+        return None
+
+    cells: list[str] = []
+    for kana_word, src_word in zip(words, src_words):
+        want = moras.split(kana_word)
+        if len(want) == 1:
+            parts = [src_word]              # foreign run, kept whole
+        else:
+            grouped = moras.split_pairs(to_kana_spans(src_word))
+            if [k for k, _s in grouped] != want:
+                return None
+            parts = [s for _k, s in grouped]
+        cells.extend(parts)
+
+    if len(cells) != len(owner):
+        return None
+    out = list(cells)
+    for i in range(len(owner) - 1):
+        if owner[i + 1] != owner[i]:
+            out[i] += gaps[owner[i]] or " "
+    return out
+
