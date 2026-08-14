@@ -32,11 +32,21 @@ Romaji lines work too and are **auto-detected** — no flag:
 aksal phase2 romaji-lines.ass --video EP01.mkv
 ```
 
-With romaji input, **your text is authoritative and comes back verbatim** --
-spacing, spelling and capitalisation alike. No morphological analyser runs at
-all, which removes the single largest error source, and the romaji track is
-built from the characters you typed rather than re-romanised from the kana. So
-`tsudzukete` stays `tsudzukete`, not `tsuzukete`; `PURAIDO` keeps its capitals.
+With romaji input, **your text is authoritative and comes back character for
+character** -- spacing, spelling, capitalisation and punctuation alike. No
+morphological analyser runs at all, which removes the single largest error
+source, and the romaji track is built from the characters you typed rather than
+re-romanised from the kana. So `tsudzukete` stays `tsudzukete`, not
+`tsuzukete`; `PURAIDO` keeps its capitals; `stop !` keeps its mark.
+
+This is structural, not best-effort: the syllables to align, the word
+boundaries and your text all come out of one pass over the line, so there is no
+second derivation that could disagree with the first and quietly win. The only
+line that does not survive is one with nothing pronounceable in it, which
+produces no karaoke because there is nothing to time.
+
+Punctuation never takes a karaoke cell of its own -- it is written, not sung,
+so a cell would hand it a share of the line's duration.
 
 The kana track is named `.kara.kana.ass` rather than `.jp.ass`, because
 reconstructed kana is not the original orthography -- there is no kanji to

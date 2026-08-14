@@ -1,17 +1,24 @@
-"""Romaji input must come back as the user typed it.
+"""Romaji input must come back exactly as the user typed it.
 
-The pipeline converts romaji to kana to align it, and for a long time it then
-re-romanised that kana -- so a sheet that said "tsudzukete" came back
-"tsuzukete". These lock the round trip.
+The pipeline converts romaji to kana in order to align it. For a long time it
+then re-romanised that kana, so a sheet that said "tsudzukete" came back
+"tsuzukete" and punctuation was dropped outright.
+
+The guarantee is now structural, not statistical: units, word ownership and the
+user's text all come out of ONE walk of the line, so there is no second
+derivation to disagree with the first. These tests pin the invariant.
 """
+import random
+
 from aksal import moras, readings, romaji
 
 
-def cells(line: str, overrides: dict | None = None) -> list[str] | None:
-    key = readings.normalise_surface(line)
-    words = readings.resolve_words(key, overrides or {}, "romaji")
-    _units, owner = moras.split_words(words)
-    return romaji.line_sourced(key, words, owner)
+def build(line: str, overrides: dict | None = None):
+    return readings.units_and_romaji(line, overrides or {}, "romaji")
+
+
+def cells(line: str) -> list[str]:
+    return build(line)[2]
 
 
 def test_spans_reassemble_the_input_exactly():
@@ -24,6 +31,15 @@ def test_split_pairs_groups_identically_to_split():
     for text in ["tsudzukete", "kitte", "PURAIDO", "kan'i", "shou", "matcha"]:
         grouped = moras.split_pairs(romaji.to_kana_spans(text))
         assert [k for k, _s in grouped] == moras.split(romaji.to_kana(text))
+
+
+def test_tokeniser_is_total():
+    """Every character lands in a token -- the base of the whole guarantee."""
+    rng = random.Random(1)
+    alphabet = list("abkosu!?,.「」 ") + ["  ", "	", "　"]
+    for _ in range(3000):
+        line = "".join(rng.choice(alphabet) for _ in range(rng.randint(0, 20)))
+        assert "".join(moras.romaji_tokens(line)) == line
 
 
 def test_unhepburn_spelling_survives():
@@ -39,93 +55,76 @@ def test_repeated_spaces_survive():
     assert "".join(cells("kimi ga  ita  basho")) == "kimi ga  ita  basho"
 
 
-def test_cells_stay_one_per_mora():
-    line = "sono te wo nigirishimeta"
-    words = readings.resolve_words(line, {}, "romaji")
-    units, owner = moras.split_words(words)
-    got = romaji.line_sourced(line, words, owner)
-    assert got is not None and len(got) == len(units)
+def test_line_edge_whitespace_survives():
+    assert "".join(cells("  kimi ga ita  ")) == "  kimi ga ita  "
 
 
-def test_punctuation_joins_the_word_before_it():
-    # Not its own cell: a \k cell has a duration, and punctuation is not sung.
+def test_punctuation_joins_the_cell_before_it():
+    # Never its own cell: a \k cell has a duration, and punctuation is not sung.
     assert cells("stop !") == ["stop !"]
     assert cells("yeah...") == ["yeah..."]
 
 
 def test_punctuation_is_not_a_word_for_group_word():
-    line = "Hey ... GO !"
-    words = readings.resolve_words(line, {}, "romaji")
-    _units, owner = moras.split_words(words)
-    ro = romaji.line_sourced(line, words, owner)
+    _units, owner, ro = build("Hey ... GO !")
     spans = moras.group_by_word(owner)
     assert ["".join(ro[a:b + 1]) for a, b in spans] == ["Hey ... ", "GO !"]
 
 
-def test_brackets_do_not_defeat_the_lineup_check():
-    # 「 and 」 attach to different sides of a cell depending on which path
-    # built it; comparing only what is pronounced keeps the line verbatim.
+def test_brackets_survive():
     assert "".join(cells("「kyou」")) == "「kyou」"
 
 
-def test_declines_when_the_word_count_disagrees():
-    # An override defines its own word split, so the source line no longer
-    # describes these words -- better to fall back than to attach the user's
-    # text to the wrong syllable.
-    words = ["か", "み"]
-    assert romaji.line_sourced("kami", words, [0, 1]) is None
+def test_a_token_that_makes_no_kana_is_folded_not_dropped():
+    # A bare number produces no mora, so it cannot own a cell -- but it is the
+    # user's text and must still appear.
+    assert "".join(cells("yeah... 123 go!")) == "yeah... 123 go!"
 
 
-def test_declines_when_moras_do_not_regroup():
-    assert romaji.line_sourced("zzz", ["ねこ"], [0, 0]) is None
+def test_cells_stay_one_per_unit():
+    units, _owner, ro = build("sono te wo nigirishimeta")
+    assert len(ro) == len(units)
 
 
 def test_word_grouping_keeps_the_source_spelling():
-    # --group word joins the per-mora cells; re-romanising the units there
-    # would have discarded the user's text on this path alone.
-    line = "tsudzukete PURAIDO no uta"
-    words = readings.resolve_words(line, {}, "romaji")
-    units, owner = moras.split_words(words)
-    ro = romaji.line_sourced(line, words, owner)
+    _units, owner, ro = build("tsudzukete PURAIDO no uta")
     spans = moras.group_by_word(owner)
     assert ["".join(ro[a:b + 1]) for a, b in spans] == [
         "tsudzukete ", "PURAIDO ", "no ", "uta"]
 
 
-def test_never_rewrites_silently_even_on_hostile_input():
-    """The invariant, stated as a property rather than as examples.
+def test_an_override_still_wins():
+    """An override names the reading AND the word split, so it must take over.
 
-    Preservation rests on three mechanisms agreeing -- span slicing, mora
-    regrouping, gap bookkeeping -- and each has its own way to drop a
-    character. So `line_sourced` compares its output against the input before
-    returning. This asserts the only thing that matters: it is either exactly
-    what the user typed, or it declines. Never something in between.
+    The sourced path cannot apply there: the surface no longer describes the
+    words, and attaching the user's text to them would misplace it.
     """
-    import random
+    units, _owner, _ro = build("kimi", {"kimi": "き み"})
+    assert units == ["き", "み"]
 
+
+def test_the_line_is_reconstructed_exactly_for_any_input():
+    """The invariant as a property, over hostile input.
+
+    Anything with at least one pronounceable mora comes back character for
+    character. Anything without has no karaoke to build at all.
+    """
     rng = random.Random(7)
     alphabet = (list("abcdefghijkmnoprstuwyz") + list("AEIOU")
                 + list("!?,.'-「」()[]~") + [" ", "  ", "	", "　"])
+    checked = 0
     for _ in range(4000):
         line = "".join(rng.choice(alphabet) for _ in range(rng.randint(1, 24)))
-        words = readings.resolve_words(line, {}, "romaji")
-        units, owner = moras.split_words(words)
-        got = romaji.line_sourced(line, words, owner)
-        if got is None:
+        units, owner, ro = build(line)
+        assert len(ro) == len(units) == len(owner), line
+        if not units:
             continue
-        assert "".join(got) == line, line
-        assert len(got) == len(units), line
+        assert "".join(ro) == line, line
+        checked += 1
+    assert checked > 2000, "fuzz produced too few pronounceable lines to matter"
 
 
-def test_plausible_romaji_is_never_declined():
-    """Declining is safe but lossy -- the user gets our spelling, not theirs.
-
-    So it must not fire on input that actually is romaji. Measured over the
-    7292 romaji lines of the test corpus it never does; this keeps a cheap
-    synthetic version of that check in the suite.
-    """
-    import random
-
+def test_plausible_romaji_always_reconstructs():
     rng = random.Random(3)
     syl = ["ka", "ki", "ku", "ke", "ko", "sa", "shi", "su", "na", "no",
            "ta", "te", "to", "mi", "ru", "wa", "n"]
@@ -136,7 +135,5 @@ def test_plausible_romaji_is_never_declined():
         if rng.random() < 0.5:
             parts[rng.randrange(len(parts))] += rng.choice(punct)
         line = " ".join(parts)
-        words = readings.resolve_words(line, {}, "romaji")
-        _units, owner = moras.split_words(words)
-        got = romaji.line_sourced(line, words, owner)
-        assert got is not None and "".join(got) == line, line
+        _units, _owner, ro = build(line)
+        assert "".join(ro) == line, line

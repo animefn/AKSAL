@@ -266,64 +266,72 @@ def looks_like_romaji(text: str, threshold: float = 0.6) -> bool:
     latin = sum(1 for c in letters if c.isascii())
     return latin / len(letters) >= threshold
 
-def line_sourced(source_line: str, words: list[str],
-                 owner: list[int]) -> list[str] | None:
-    """Romanise a line as the USER wrote it, not as we would spell it.
+def sourced_line(line: str, is_foreign) -> tuple[list[str], list[int], list[str]]:
+    """Build units, word ownership and the user's own text in ONE walk.
 
-    Romaji input is converted to kana to be aligned, and re-romanising the kana
-    afterwards quietly rewrites the author's text -- "dzu" comes back "zu",
-    "PURAIDO" comes back "puraido", doubled spaces collapse. Someone who typed
-    romaji did that work on purpose and expects it back.
+    Returns (units, owner, cells): `units` is the kana to align, `owner[i]` is
+    the word cell i belongs to, and `cells[i]` is exactly the characters the
+    user typed for it.
 
-    Returns None -- caller falls back to `line_spaced` -- whenever the source
-    does not demonstrably line up with the kana it produced: a different word
-    count, or a word whose spans do not regroup into the same moras. Better a
-    correctly-spelled cell in our romanisation than the user's text attached to
-    the wrong syllable.
+    THE INVARIANT: ``"".join(cells) == line``, by construction rather than by
+    comparison, for any line with at least one pronounceable mora.
+
+    It holds because nothing is derived twice. Preservation used to rest on two
+    independent conversions of the same text agreeing with each other -- one
+    producing kana words, one producing source spans -- and where they
+    disagreed the only safe move was to give up and re-romanise, losing the
+    user's spelling. Here the kana and the text come out of the same walk, so
+    there is no second opinion to contradict.
+
+    Three places a character could otherwise escape, each closed by
+    construction rather than by a check:
+
+      * the tokeniser is total -- the tokens concatenate to the line
+      * `to_kana_spans` slices are contiguous and cover their token
+      * a token that yields no cell at all (bare punctuation, a bare number)
+        is not dropped: its text is folded into the neighbouring cell, left if
+        one exists and right otherwise
+
+    A line with nothing pronounceable in it yields no cells, and therefore no
+    karaoke -- there is nothing to time. That is the one case where text does
+    not survive, and it survives as the untouched dialogue line instead.
     """
-    from . import moras          # local: moras imports romaji at module level
+    from . import moras
 
-    # Keep the separators, not just the words: the gap between two words is
-    # the user's text too, and re-joining on a single space is one more silent
-    # rewrite of what they typed.
-    src_words, gaps = moras.romaji_tokens(source_line)
-    if len(src_words) != len(words):
-        return None
-
+    units: list[str] = []
+    owner: list[int] = []
     cells: list[str] = []
-    for kana_word, src_word in zip(words, src_words):
-        want = moras.split(kana_word)
-        if len(want) == 1:
-            parts = [src_word]              # foreign run, kept whole
-        else:
-            grouped = moras.split_pairs(to_kana_spans(src_word))
-            # Compare only what is pronounced. Punctuation rides along on
-            # whichever cell precedes it and is not a mora, so 「kyou」 must not
-            # be rejected merely because the bracket landed on one side here and
-            # the other side there.
-            def bare(unit: str) -> str:
-                return "".join(c for c in unit
-                               if not moras.is_punctuation(c))
+    held = ""                       # text awaiting the first cell that appears
+    word = -1
 
-            if [bare(k) for k, _s in grouped] != [bare(x) for x in want]:
-                return None
-            parts = [s for _k, s in grouped]
-        cells.extend(parts)
+    for token in moras.romaji_tokens(line):
+        core = "".join(c for c in token
+                       if not moras.is_punctuation(c) and not c.isspace())
+        pieces: list[tuple[str, str]] = []
+        if core:
+            if is_foreign(core):
+                # Latin stays latin: transliterating it would invent moras
+                # nobody sings, and `moras.split` keeps such a run whole.
+                pieces = [(core, token)]
+            else:
+                pieces = moras.split_pairs(to_kana_spans(token))
 
-    if len(cells) != len(owner):
-        return None
-    out = list(cells)
-    for i in range(len(owner) - 1):
-        if owner[i + 1] != owner[i]:
-            out[i] += gaps[owner[i]] or " "
-    out[-1] += gaps[-1]
+        if not pieces:
+            if cells:
+                cells[-1] += token          # fold left
+            else:
+                held += token               # fold right, onto the first cell
+            continue
 
-    # The guarantee, checked rather than assumed. Preservation otherwise rests
-    # on three separate mechanisms agreeing -- span slicing, mora regrouping and
-    # gap bookkeeping -- and each has its own way to drop a character. One
-    # comparison turns "probably verbatim" into "verbatim, or we say so and the
-    # caller falls back".
-    if "".join(out) != source_line:
-        return None
-    return out
+        word += 1
+        for j, (kana, text) in enumerate(pieces):
+            units.append(kana)
+            owner.append(word)
+            cells.append((held + text) if j == 0 else text)
+            held = ""
+
+    if held and cells:
+        cells[-1] += held
+    return units, owner, cells
+
 

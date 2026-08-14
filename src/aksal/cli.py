@@ -295,12 +295,9 @@ def cmd_phase1(args) -> None:
     romaji_of: dict[int, str] = {}
     if args.insert_romaji:
         for line_no, surface, _reading in rows:
-            words = readings.resolve_words(surface, overrides, source)
-            units, owner = moras.split_words(words)
-            cells = (romaji.line_sourced(surface, words, owner)
-                     if source == "romaji" else None)
-            romaji_of[line_no] = "".join(
-                cells if cells is not None else romaji.line_spaced(units, owner))
+            units, owner, cells = readings.units_and_romaji(
+                surface, overrides, source)
+            romaji_of[line_no] = "".join(cells)
         log(f"  romaji hints on {len(romaji_of)} line(s)")
 
     events, cut, straddled = [], [], []
@@ -527,8 +524,8 @@ def cmd_phase2(args) -> None:
         surface = ev.plain
         if not surface:
             continue
-        words = readings.resolve_words(surface, overrides, proj.lyrics_source)
-        units, owner = moras.split_words(words)
+        units, owner, ro_cells = readings.units_and_romaji(
+            surface, overrides, proj.lyrics_source)
         if not units:
             continue
 
@@ -572,13 +569,6 @@ def cmd_phase2(args) -> None:
         v_starts = [src.to_video(s) for s in starts]
 
         jp_cells = units
-        # With a romaji sheet, give the user's own spelling back rather than
-        # our romanisation of the kana we derived from it.
-        ro_cells = None
-        if proj.lyrics_source == "romaji":
-            ro_cells = romaji.line_sourced(surface, words, owner)
-        if ro_cells is None:
-            ro_cells = romaji.line_spaced(units, owner)
         cell_starts = v_starts
 
         if args.group == "word":

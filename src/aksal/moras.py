@@ -111,39 +111,40 @@ def is_punctuation(ch: str) -> bool:
 
 
 
-def romaji_tokens(text: str) -> tuple[list[str], list[str]]:
-    r"""Split a romaji line into words, and the gaps that followed them.
+def romaji_tokens(text: str) -> list[str]:
+    r"""Split a romaji line into tokens whose concatenation IS the line.
 
-    A token of pure punctuation is merged into the word BEFORE it, taking its
-    separating space along -- "stop !" is one word, not two. Punctuation is not
-    sung, so making it a word of its own would hand it a share of the line's
-    time and, under --group word, invent a word the user never wrote.
+    The invariant is the point: ``"".join(romaji_tokens(x)) == x`` for every x,
+    with no exceptions and nothing to verify afterwards. Each token carries the
+    whitespace that followed it, and a leading run of whitespace rides on the
+    first token, so no character is ever held outside the list where it could
+    be forgotten.
 
-    Everything the user typed survives: the gaps are returned rather than
-    discarded, and leading whitespace rides on the first word, so the caller
-    reassembles the line exactly as written -- repeated spaces, indentation and
-    all. `romaji.line_sourced` asserts that reassembly rather than trusting it.
+    Punctuation-only tokens are folded into the neighbouring token -- left if
+    there is one, otherwise right. Punctuation is written, not sung: a token of
+    its own would take a `\k` cell, hand it a share of the line's duration, and
+    invent a word under --group word that the user never typed.
     """
     parts = re.split(r"(\s+)", text)
-    words: list[str] = []
-    gaps: list[str] = []
-    lead = ""
+    tokens: list[str] = []
+    held = ""                           # text not yet owned by any token
     for i in range(0, len(parts), 2):
-        tok = parts[i]
-        gap = parts[i + 1] if i + 1 < len(parts) else ""
-        if not tok:
-            lead += gap                 # leading run: it belongs to word 0
+        piece = parts[i] + (parts[i + 1] if i + 1 < len(parts) else "")
+        if not parts[i]:                # pure whitespace run
+            held += piece
             continue
-        if words and all(is_punctuation(c) for c in tok):
-            words[-1] += gaps[-1] + tok
-            gaps[-1] = gap
+        if tokens and all(is_punctuation(c) or c.isspace() for c in piece):
+            tokens[-1] += held + piece
+            held = ""
             continue
-        words.append(lead + tok)
-        lead = ""
-        gaps.append(gap)
-    if lead and words:                  # a line that is nothing but spaces
-        words[-1] += lead
-    return words, gaps
+        tokens.append(held + piece)
+        held = ""
+    if held:
+        if tokens:
+            tokens[-1] += held
+        else:
+            tokens.append(held)
+    return tokens
 
 
 def strip_trailing_punctuation(word: str) -> tuple[str, str]:

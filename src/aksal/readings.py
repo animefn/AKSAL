@@ -375,22 +375,21 @@ def resolve_words(surface: str, overrides: dict[str, str],
         parts = overrides[key].split()
         return parts if parts else [overrides[key]]
     if source == "romaji":
-        from . import moras
+        from . import romaji as _romaji
 
-        words, _gaps = moras.romaji_tokens(key)
-        if not words:
+        # Derived from the SAME walk that builds the romaji cells, so the two
+        # can never disagree. They used to be computed independently, and where
+        # they differed the user's spelling was silently discarded.
+        units, owner, _cells = _romaji.sourced_line(key, is_foreign)
+        if not units:
             return [key]
-        out = []
-        for word in words:
-            core, tail = moras.strip_trailing_punctuation(word)
-            # A foreign word is left in latin script, which `moras.split` keeps
-            # as a single unit. Transliterating it would invent moras nobody
-            # sings. Trailing punctuation rides along on the kana so it cannot
-            # become an empty word, which would be dropped silently and take
-            # the user's character with it.
-            kana = core if is_foreign(core) else (romaji_to_kana(core) or core)
-            out.append(kana + "".join(c for c in tail if not c.isspace()))
-        return out
+        words: list[str] = []
+        for unit, w in zip(units, owner):
+            if w >= len(words):
+                words.append(unit)
+            else:
+                words[-1] += unit
+        return words
     return [kana for _surface, kana in analyse_words(key)]
 
 
@@ -439,3 +438,27 @@ def from_lyrics(lyrics: Path, overrides: dict[str, str] | None = None,
         rows.append((i, surface,
                      " ".join(resolve_words(surface, overrides, source))))
     return rows
+
+def units_and_romaji(surface: str, overrides: dict[str, str],
+                     source: str = "jp") -> tuple[list[str], list[int], list[str]]:
+    """(units, owner, romaji cells) -- the one entry point callers should use.
+
+    For a romaji sheet the three come out of a single walk of the user's line,
+    so the romaji track is the characters they typed rather than our
+    romanisation of the kana we derived from them. See `romaji.sourced_line`
+    for why that has to be one walk and not two agreeing ones.
+
+    A manual override still wins: it names the reading AND the word split, so
+    the surface no longer describes the words and the sourced path cannot
+    apply. Japanese input takes the analyser and our own romanisation, there
+    being no user spelling to preserve.
+    """
+    from . import moras, romaji
+
+    if source == "romaji" and normalise_surface(surface) not in overrides:
+        return romaji.sourced_line(surface, is_foreign)
+
+    words = resolve_words(surface, overrides, source)
+    units, owner = moras.split_words(words)
+    return units, owner, romaji.line_spaced(units, owner)
+
