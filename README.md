@@ -83,9 +83,14 @@ Verified on Python 3.13, including `demucs` 4.1.0. An earlier note here claimed
 demucs forced a 3.11 environment; that turned out not to be true when actually
 tried, and is left recorded because the claim had been repeated.
 
-The acoustic model downloads from Hugging Face on first run and is cached, and is
-shared across every song. Everything else a run produces is per-song and lives
-beside your output.
+The acoustic model downloads on first run (~630 MB), is cached, and is shared
+across every song. Everything else a run produces is per-song and lives beside
+your output.
+
+`--model` accepts any other CTC model that emits kana, as a Hugging Face id or a
+checkpoint path. The three things the pipeline actually requires -- a kana
+vocabulary, a CTC blank, 20 ms frames -- are all verified on load, because each
+one fails silently rather than loudly.
 
 ---
 

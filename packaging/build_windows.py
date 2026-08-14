@@ -33,11 +33,21 @@ EXCLUDE = [
     # Optional at runtime: separation is opt-in, and yt-dlp is only used by
     # `find`. Both are better installed alongside than frozen in.
     "demucs", "julius", "openunmix", "yt_dlp",
+    # Measured in a first build: 246 MB of modules nothing on this path calls,
+    # dragged in by transformers' optional imports. Audio is decoded by shelling
+    # out to ffmpeg, so PyAV is never touched; nothing here does vision, ONNX or
+    # classical ML.
+    "cv2", "av", "onnxruntime", "onnx", "sklearn", "scipy.sparse.csgraph",
+    "nltk", "sentencepiece", "safetensors.mlx", "safetensors.tensorflow",
+    "PIL", "Pillow", "timm", "accelerate", "datasets", "evaluate",
 ]
 
 HIDDEN = [
-    "aksal.dualctc", "aksal.catalog", "aksal.fetch", "aksal.discover",
-    "sklearn.utils._typedefs", "scipy.special.cython_special",
+    # Reached only through the CLI dispatch table or a lazy import, so a static
+    # analyser cannot see them.
+    "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
+    "aksal.discover",
+    "scipy.special.cython_special",
 ]
 
 

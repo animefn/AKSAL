@@ -149,7 +149,8 @@ lyrics down.
 |---|---|
 | `--insert-romaji` | prefixes each phase-1 line with its romaji, invisible when rendered. For timers who cannot read Japanese. |
 | `--group word` | one karaoke cell per word instead of per syllable. Timing is identical. |
-| `--no-preprocess` | skip vocal separation. **~4x faster and about as accurate** — measured over eight songs it is a wash: separation is marginally better on average and worse in the tail. |
+| `--separate-audio` | isolate vocals with demucs first. **Off by default** — measured over eight songs it is a wash: marginally better on average, worse in the tail, for ~4x the runtime. Worth trying on a noisy mix. |
+| `--model` | use a different acoustic model: a Hugging Face id, or a path to a checkpoint. It must emit **kana** and the tool refuses it if not. |
 | `--skip-cost N` | how freely the aligner may treat audio between lines as unsung. `none` disables it. |
 | `--no-lrc-hints` | ignore LRCLIB synced timings even when verified. |
 | `--lead-in SEC` | shift every cue earlier. |
@@ -175,6 +176,22 @@ romaji karaoke puts its spaces.
 
 If you previously ran an older version, delete `OP01.readings.tsv` and re-run
 phase 1: an unspaced table loads as an override and keeps the old behaviour.
+
+## The acoustic model
+
+Downloaded once on first use (~630 MB) and cached, the way faster-whisper does
+it. Nothing is bundled with the tool, so the download happens on the first run
+and never again.
+
+It is fine-tuned from a Japanese-only encoder pretrained on 35,000 hours.
+Against hand-timed karaoke it places most syllables within 0.06s, and 73-86% of
+them inside 100 ms.
+
+You can point `--model` at anything else that emits kana. The pipeline needs
+only three things -- a kana vocabulary, a CTC blank, and 20 ms frames -- and all
+three are checked, because each fails **silently** otherwise. A general Japanese
+ASR model that writes kanji will align to the wrong sounds while producing
+output that looks completely ordinary, so those are refused outright.
 
 ## What to expect
 

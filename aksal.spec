@@ -18,7 +18,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=['tensorflow', 'flax', 'jax', 'jaxlib', 'keras', 'torch.distributed', 'torch.testing', 'torch.utils.tensorboard', 'torchvision', 'torchaudio.prototype', 'matplotlib', 'pandas', 'IPython', 'notebook', 'jupyter', 'pytest', '_pytest', 'sympy.plotting', 'tkinter', 'demucs', 'julius', 'openunmix', 'yt_dlp'],
+    excludes=['tensorflow', 'flax', 'jax', 'jaxlib', 'keras', 'torch.distributed', 'torch.testing', 'torch.utils.tensorboard', 'torchvision', 'torchaudio.prototype', 'matplotlib', 'pandas', 'IPython', 'notebook', 'jupyter', 'pytest', '_pytest', 'sympy.plotting', 'tkinter', 'demucs', 'julius', 'openunmix', 'yt_dlp', 'cv2', 'av', 'onnxruntime', 'onnx', 'sklearn', 'scipy.sparse.csgraph', 'nltk', 'sentencepiece', 'safetensors.mlx', 'safetensors.tensorflow', 'PIL', 'Pillow', 'timm', 'accelerate', 'datasets', 'evaluate'],
     noarchive=False,
     optimize=0,
 )
