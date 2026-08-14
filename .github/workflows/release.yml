@@ -1,0 +1,90 @@
+# Builds the Windows distribution and publishes it as a GitHub release.
+#
+# To cut a release:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# That is the whole ritual. The tag drives everything -- the release name, the
+# archive name, and the version shown to a user -- so there is one place to get
+# it right and no second thing to remember to update.
+#
+# Windows runners bill at 2x minutes and this job takes 10-15 of them, so it is
+# deliberately NOT on every push.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (for a dry run without releasing)"
+        required: false
+
+permissions:
+  contents: write        # needed to create the release
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install (CPU torch only)
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+          pip install pyinstaller
+
+      # Never ship something the tests have not passed. This is the whole reason
+      # the build is not simply run by hand.
+      - name: Tests
+        run: pytest -q
+
+      - name: Build
+        run: python packaging/build_windows.py
+
+      # build_windows.py already runs the executable and fails if it does not
+      # start -- two earlier builds exited 0 and produced a binary that died on
+      # its first import, so "the build succeeded" is not evidence of anything.
+
+      - name: Archive
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          Compress-Archive -Path dist/aksal/* -DestinationPath "aksal-$tag-windows-x64.zip"
+          Get-Item "aksal-$tag-windows-x64.zip" | Select-Object Name, @{n="MB";e={[int]($_.Length/1MB)}}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aksal-windows
+          path: aksal-*-windows-x64.zip
+
+      - name: Publish
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $notes = @"
+          Windows build, x64. Unzip and run ``aksal.exe`` from the folder --
+          it needs ``_internal\`` beside it.
+
+          The acoustic model (~630 MB) downloads on first run into ``models\``
+          beside the executable, so the folder stays self-contained.
+
+          ``ffmpeg`` is required and ``yt-dlp`` is optional; if either is
+          missing the tool offers to fetch it. Vocal separation
+          (``--separate-audio``) needs demucs and is only available when running
+          from source.
+
+          See USAGE.md for the four workflows.
+          "@
+          gh release create $tag "aksal-$tag-windows-x64.zip" --title "AKSAL $tag" --notes $notes

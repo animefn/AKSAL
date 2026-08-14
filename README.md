@@ -364,6 +364,23 @@ the waveform, starting with whatever phase 1 flagged.
 
 ---
 
+## Releases
+
+Windows builds are produced by GitHub Actions from a tag:
+
+```bash
+git tag v0.1.0 && git push origin v0.1.0
+```
+
+That is the whole ritual — the tag names the release, the archive and the
+version. Tests run first, and the build refuses to publish anything whose
+executable does not start.
+
+`.github/workflows/tests.yml` runs the suite on every push; the release
+workflow is separate because Windows runners are slower and billed at double.
+
+---
+
 ## Attribution
 
 AKSAL is glue around other people's work — the acoustic model, the Japanese

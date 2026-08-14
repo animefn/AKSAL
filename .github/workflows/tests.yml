@@ -1,0 +1,37 @@
+# Runs on every push. Cheap insurance: a syntax error once sat in cli.py while
+# the whole suite passed locally, because nothing imported it -- and the only
+# reason it was caught was that the next command happened to fail.
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest        # 1x minutes; the tests are platform-agnostic
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: Install (CPU torch only)
+        # The default index would pull the CUDA build: several GB, and useless
+        # here since inference is CPU-bound anyway.
+        run: |
+          python -m pip install --upgrade pip
+          pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -e ".[dev]"
+
+      - name: Tests
+        run: pytest -q
+
+      - name: Static check
+        run: |
+          pip install pyflakes
+          pyflakes src/aksal tests
