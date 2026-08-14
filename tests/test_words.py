@@ -474,13 +474,13 @@ def test_karaoke_text_accepts_matching_lengths():
     from aksal import ass
 
     out = ass.karaoke_text(["a", "b"], [0.0, 0.5], 0.0, 1.0)
-    assert out.count("\k") == 2
+    assert out.count(r"\k") == 2
 
 
 # --- a line ends when its singing ends -----------------------------------------
 
 def test_a_line_tail_is_trimmed_to_its_own_pace():
-    """Ends come from the NEXT unit's onset, and for the last syllable of a line
+    r"""Ends come from the NEXT unit's onset, and for the last syllable of a line
     that unit belongs to the following line -- so a line before an instrumental
     ran on until the cap, and `\k` tiling spent the whole rest inside it."""
     from aksal import align

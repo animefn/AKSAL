@@ -334,8 +334,6 @@ def is_foreign(word: str) -> bool:
     out as one un-split cell. That is visible in the phase 1 romaji hint and
     fixable in one row of the readings table, which is what the table is for.
     """
-    from . import romaji
-
     kana = romaji_to_kana(word)
     if LATIN.search(kana):
         return True

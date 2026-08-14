@@ -334,10 +334,10 @@ def ensure_ytdlp(log=print) -> bool:
 
 
 def demucs_available() -> bool:
-    try:
-        import demucs  # noqa: F401
+    import importlib.util
 
-        return True
+    try:
+        return importlib.util.find_spec("demucs") is not None
     except Exception:                                   # noqa: BLE001
         return False
 

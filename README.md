@@ -364,94 +364,98 @@ the waveform, starting with whatever phase 1 flagged.
 
 ---
 
-## Limitations
+## Attribution
 
-- **demucs measurements are thin** — the benchmark below is raw-mix, so the
-  numbers are a floor rather than what the defaults produce.
-- **Japanese only**, by construction: the acoustic model's vocabulary is kana.
-- **Merged-episode targets are lightly tested.**
-- **A repeated chorus can be matched to the wrong occurrence.** Two identical
-  chorus blocks fingerprint equally well against either, and when the wrong one
-  is picked the two chunks claim the same span of the song. That is now detected
-  and resolved in favour of the earlier chunk — which keeps the map monotonic,
-  but can cost the lines in the disputed span. Watch for it in phase 1's output.
-- **TV-original content is unreachable in Mode A.** If the broadcast sings
-  something the released single does not contain, no reference can locate it.
+AKSAL is glue around other people's work — the acoustic model, the Japanese
+analysers, ffmpeg, PyTorch. **[THIRD-PARTY.md](THIRD-PARTY.md)** records who
+made what and under which licence.
+
+The acoustic model in particular is
+[hiragana-asr](https://github.com/nyosegawa/hiragana-asr) by Sakasegawa
+(Apache-2.0), and the kana vocabulary in `dualctc.py` is reproduced from that
+project because token order is part of the checkpoint contract.
 
 ---
 
 ## Changelog
 
-### 0.1.0
-
-Initial release.
+### 0.1.0 — first packaged build
 
 **Alignment**
-- Fingerprint-based song location, recovering the full TV-edit splice structure
-  in one pass
-- CTC forced alignment against a clean reference track, with results mapped onto
-  the video timeline
-- Two-phase workflow: line timings you correct, then syllable timings constrained
-  to those windows
+- Fingerprint-based song location, recovering the whole TV-edit splice structure
+  in one pass, including edits that keep several non-adjacent chunks
+- CTC forced alignment, with results mapped onto the video timeline
+- Two-phase workflow: line timings you correct, then syllable timings
+  constrained to those windows
 - Emission caching, so iterating on readings costs seconds rather than minutes
+- LRCLIB synced line timings used as anchors when they can be verified against
+  the reference by duration and artist
+
+**Acoustic model**
+- Dual-CTC wav2vec2 fine-tuned from a Japanese-only encoder, downloaded on
+  first run
+- `--model` accepts any other kana CTC model, with its vocabulary, blank index
+  and frame stride all checked rather than trusted
+
+**Japanese**
+- Mora splitting with っ as its own beat, matching how a timer counts it
+- Word boundaries from unidic, with ipadic as a second opinion on compounds
+- Foreign words detected and left whole rather than transliterated
+- Furigana resolved to the reading that is actually sung
+- Every reading and word boundary overridable in an editable TSV
 
 **Output**
-- JP and Romaji karaoke from one syllable segmentation, guaranteeing identical
-  `\k` splits
-- `\k` values tile each line exactly, including an empty lead-in cell, so the
-  highlight cannot drift from the audio
-- Modified Hepburn with doubled long vowels
+- Japanese and romaji karaoke tracks built from one segmentation, so their `\k`
+  splits match by construction
+- `--group word` for a calmer highlight, at identical timing
 
-**Input**
-- Japanese or romaji lyrics, auto-detected
-- Editable reading overrides keyed by surface text
-- Phase 2 runnable standalone from a hand-made subtitle
+**Discovery**
+- `find`: anime name → song → lyrics → reference track, each step confirmable
+- The downloaded track is fingerprinted against your episode before it is
+  accepted, because the top search result for a song is routinely a MAD or a
+  cover
+
+**Measured**, against hand-timed karaoke over eight songs on three shows:
+0.059 s median syllable error given correct lines, 73–86% of syllables inside
+100 ms. See `tests/` for the harness that produces those numbers.
+
+---
+
+## Limitations
+
+Stated plainly, because each one produces plausible-looking output rather than
+an error.
+
+- **A repeated chorus can be mapped to the wrong occurrence.** Both instances
+  fingerprint identically. Detected and resolved in favour of the earlier one,
+  which keeps the map consistent but can cost the lines in the disputed span.
+- **A lyric sheet that omits something sung loses those lines.** If the
+  broadcast sings a hook the published lyrics do not print, no reference can
+  find it.
+- **About five words in seven hundred segment differently** from a human timer's
+  convention. The remaining cases are lexical rather than grammatical — the
+  readings TSV is the fix, not another rule.
+- **Sustained vowels and melisma** are where syllable timing still smears.
+- **Japanese only**, by construction: the model's vocabulary is kana.
+- **The published numbers are without separation.** `--separate-audio` measured
+  as a wash and is off by default.
 
 ---
 
 ## Roadmap
 
-### 1. The skip state
+**The skip state.** Forced alignment must consume every token, so a line that is
+not sung has nowhere to go and the surplus lands in the nearest instrumental
+passage. `torchaudio.functional.forced_align` supports a `<star>` token for
+exactly this, and it is implemented behind `--skip-cost` — but measured across
+the corpus it is a win on two songs and a regression on three, so it is off. The
+complementary half, not yet built, is deciding *which* lines are sung: decode
+the window freely, then align the lyric sheet against that hypothesis as a
+text-to-text problem, where skipping is free.
 
-The single largest remaining win, and the root cause behind most of what phase 1
-still gets wrong.
+**More ground truth.** Every segmentation rule here is validated against roughly
+700 words of hand-timed karaoke. That is thin. `tests/segaudit.py` scales to
+more of it unchanged, and more of it would settle more than any further rule
+would.
 
-Forced alignment must consume every token, so a line that is not sung has
-nowhere to go and the surplus lands in the nearest instrumental passage. That is
-why a line after a long rest starts too early, why a 13-second interlude gets
-swallowed, and why a full lyric sheet cannot be used without a reference.
-
-`torchaudio.functional.forced_align` — the function already in use — supports a
-`<star>` token for exactly this: extend the emission matrix by one column and
-interleave stars between lines. A small penalty lets the path absorb rests; a
-larger one lets it decide a line is absent. No new dependency and no hand-written
-trellis.
-
-The complementary approach, for deciding *which* lines are sung: greedily decode
-the window (argmax over an emission matrix already computed, so nearly free),
-then locally align the lyric sheet against that rough hypothesis as a
-**text-to-text** problem. Skipping is free in local alignment, which is the whole
-point of it. Lines that match a region are sung; lines that match nothing were
-cut. Then force-align only the matched lines inside their matched spans. This is
-the standard anchor-based method for long audio with an imperfect transcript.
-
-### 2. Verify what is currently assumed
-
-- **Run demucs end to end across the test set.** It is the default path and
-  every published number here is without separation.
-- The skip state (see below) — the single largest remaining win.
-
-### 3. Improve syllable accuracy
-
-- Posterior-mass durations instead of the spike-to-spike heuristic, removing the
-  `max_hold` fudge factor
-- Reading verification by disagreement: greedy-decode the emissions we already
-  compute and flag lines where the audio disagrees with the analyser, which
-  catches the 永遠/とわ class automatically and for free
-- Furigana output so the JP track can show kanji with readings above
-
-### 4. Packaging and GUI
-
-Shared with ASRI — a standalone binary, then a GUI. Note that AKSAL drags in
-torch and demucs, so a frozen AKSAL is far larger than a frozen ASRI; they should
-stay separate packages even if they share a front end.
+**Cross-platform builds.** Windows only today.
