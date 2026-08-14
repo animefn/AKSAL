@@ -208,6 +208,39 @@ class Aligner:
                      f"vocabulary: {''.join(sorted(missing))}")
         return out
 
+    # --- what was actually sung ---------------------------------------------
+
+    def free_decode(self, lp: torch.Tensor) -> str:
+        """Greedy CTC decode: the kana the model hears, with no lyrics imposed.
+
+        Forced alignment answers "where do these sounds occur", and is obliged
+        to place them SOMEWHERE however wrong they are. This answers the
+        different question "what is being sung", which is the only way to catch
+        a reading the sheet gets wrong -- most importantly gikun, where the
+        lyricist writes one word and has the singer sing another (永遠 sung
+        とわ). No dictionary can know those: they are invented per song.
+
+        MEASURED LIMIT, so nobody rebuilds the same dead end: on sung music
+        this decode is SPARSE -- roughly seven kana recovered from ten seconds
+        of singing. It therefore cannot answer "does this word appear", because
+        almost nothing appears; a detector built on that flagged 21% of a
+        corpus song and buried its one true positive.
+
+        What it can answer is which of TWO candidate readings was sung, scored
+        over the same span. There the sparseness cancels: for a line where the
+        sheet printed 永遠, えいえん matched 0% of the decode and とわ matched
+        100%. Use it to compare, never to detect.
+        """
+        ids = torch.argmax(lp, dim=-1).tolist()
+        kept: list[int] = []
+        prev = None
+        for i in ids:
+            if i != prev and i != self.blank:
+                kept.append(i)
+            prev = i
+        inv = {v: k for k, v in self.vocab.items()}
+        return "".join(inv.get(i, "") for i in kept)
+
     def align_units(self, lp: torch.Tensor, units: list[str],
                     frame_offset: int = 0) -> list[dict]:
         """Align `units` against an emission matrix; times are absolute seconds."""
