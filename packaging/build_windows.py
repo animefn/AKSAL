@@ -13,14 +13,19 @@ the distributable stays the same size whichever model you end up using.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-DIST = ROOT / "dist"
-WORK = ROOT / "build"
+
+# Overridable, because on Windows a shell sitting inside dist/aksal locks the
+# directory and nothing can replace it -- which is exactly what happens when
+# someone is trying out the previous build while a new one is made.
+DIST = Path(os.environ.get("AKSAL_DIST", ROOT / "dist"))
+WORK = Path(os.environ.get("AKSAL_WORK", ROOT / "build"))
 
 # Pulled in by transformers/torch but never reached on this path. Excluding
 # them is most of the difference between a large build and an absurd one.
@@ -58,6 +63,10 @@ def main() -> int:
     onefile = "--onefile" in sys.argv
     for d in (DIST, WORK):
         shutil.rmtree(d, ignore_errors=True)
+        if d.exists():
+            print(f"cannot clear {d} -- is a shell or program using it?")
+            print("  close anything inside it, or set AKSAL_DIST to another path")
+            return 1
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -65,12 +74,20 @@ def main() -> int:
         "--noconfirm", "--clean",
         "--console",
         "--onefile" if onefile else "--onedir",
+        "--distpath", str(DIST),
+        "--workpath", str(WORK),
         "--paths", str(ROOT / "src"),
         # transformers and fugashi resolve things at import time that a static
         # analyser cannot see.
         "--collect-submodules", "transformers.models.wav2vec2",
         "--collect-data", "unidic_lite",
         "--collect-data", "ipadic",
+        # pkg_resources is dragged in by something in the dependency tree, and
+        # PyInstaller's runtime hook imports it before main() ever runs. On
+        # import, jaraco.text reads a data file that is not collected by
+        # default, so the whole application dies on a missing "Lorem ipsum.txt"
+        # before it has done anything.
+        "--collect-data", "jaraco.text",
         str(ROOT / "packaging" / "entry.py"),
     ]
     for mod in EXCLUDE:
