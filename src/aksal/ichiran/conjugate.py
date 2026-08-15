@@ -17,9 +17,18 @@ So one rule conjugates both strings at once, and an expression ending in a verb
 alignment between surface and reading is needed, which is the part that would
 otherwise be hard.
 
-Only the forms that actually occur in sung lyrics are generated. Every extra
-form costs index size and adds a chance of a spurious match, so causative
-passives and honorific forms are deliberately absent.
+WHERE THIS STOPS, BY DESIGN. Auxiliaries after the te-form (〜ていた, 〜てくる,
+〜ちゃう) are NOT generated here. ichiran attaches those during the search --
+dict-grammar.lisp's suffix machinery, ported in suffixes.py -- because they
+compose (いる itself conjugates: 〜ていました) and pre-generating the product
+of two conjugations explodes the index while still missing forms. This module
+generates exactly what ichiran's conjugation table generates: one inflection
+step, including the stem forms the suffix machinery attaches to.
+
+Forms are NAMED because the suffix machinery selects roots by form: たい
+attaches to a continuative stem ("stem"), ちゃう to a te-form ("te"), さ to an
+adjective stem ("adj-stem"). The names are the contract between this file, the
+index, and suffixes.py.
 """
 from __future__ import annotations
 
@@ -51,6 +60,19 @@ ADJ_I = "adj-i"
 SURU = "suru"
 KURU = "kuru"
 
+# Forms ichiran lists in *weak-conj-forms*: real inflections, but not words on
+# their own. They exist so the suffix machinery has roots to attach to (行か +
+# なきゃ, 高 + さ); standing alone they must not collect the commonness bonus,
+# or bare stems start beating real words. scoring.py reads this set.
+WEAK_FORMS = frozenset({"neg-stem", "adj-stem"})
+
+# The negative is not one form but a small family, and sung Japanese uses all
+# of it: 行かない / 行かなかった / 行かなくて / 行かなければ. ichiran gets these
+# from secondary conjugation (ない conjugates as an i-adjective); here the
+# family is spelled out once and appended wherever the negative stem goes.
+_NEG_TAILS = (("ない", "neg"), ("なかった", "neg-past"),
+              ("なくて", "neg-te"), ("なければ", "neg-cond"))
+
 
 def classify(pos_values: set[str]) -> str | None:
     """Which conjugation class, from JMdict's part-of-speech strings.
@@ -75,33 +97,6 @@ def classify(pos_values: set[str]) -> str | None:
     if "kuru verb" in low:
         return KURU
     return None
-
-
-# AUXILIARIES ATTACH TO THE TE-FORM AND MAKE ONE WORD. 狂っていた is a single
-# thing a singer sings and a timer times; leaving them apart returned
-# 狂って | い | た, three tokens, with い read as a COUNTER because a lone い
-# is a dictionary entry of its own.
-#
-# ichiran handles this in dict-grammar.lisp by attaching suffixes during the
-# search. Generating the combined forms into the index instead reaches the same
-# result through the machinery that already exists here, at the cost of index
-# size. The colloquial contractions (てる, てた) are not optional: sung
-# Japanese uses them constantly.
-TE_AUXILIARIES = (
-    ("いる", "te-iru"), ("いた", "te-ita"), ("いて", "te-ite"),
-    ("います", "te-imasu"), ("いない", "te-inai"),
-    ("る", "teru"), ("た", "teta"),          # ている -> てる, ていた -> てた
-    ("しまう", "te-shimau"), ("しまった", "te-shimatta"),
-    ("いく", "te-iku"), ("くる", "te-kuru"),
-    ("ある", "te-aru"), ("おく", "te-oku"),
-    ("ほしい", "te-hoshii"), ("みる", "te-miru"),
-)
-
-
-def _with_auxiliaries(te_surface: str, te_reading: str):
-    """The te-form plus each auxiliary, as single words."""
-    return [(te_surface + add, te_reading + add, name)
-            for add, name in TE_AUXILIARIES]
 
 
 def _pair(surface: str, reading: str, drop: int, add: str):
@@ -134,72 +129,56 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
     if cls == ICHIDAN:
         if tail != "る":
             return out
-        for add, name in (("て", "te"), ("た", "past"), ("ない", "neg"),
-                          ("", "stem"), ("れば", "cond"), ("よう", "vol"),
-                          ("られる", "pass"), ("させる", "caus"),
-                          ("ろ", "imp"),
-                          ("ます", "polite"), ("ました", "polite-past"),
-                          ("ません", "polite-neg")):
+        adds = [("て", "te"), ("た", "past"), ("", "stem"), ("れば", "cond"),
+                ("よう", "vol"), ("られる", "pass"), ("させる", "caus"),
+                ("ろ", "imp"),
+                ("ます", "polite"), ("ました", "polite-past"),
+                ("ません", "polite-neg")]
+        adds += [(t, name) for t, name in _NEG_TAILS]
+        for add, name in adds:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
-        te = _pair(surface, reading, 1, "て")
-        if te:
-            out.extend(_with_auxiliaries(*te))
 
-    elif cls == GODAN:
-        if tail not in GODAN_TE:
+    elif cls in (GODAN, GODAN_IKU):
+        if cls == GODAN and tail not in GODAN_TE:
             return out
-        te, ta = GODAN_TE[tail]
-        a_row, i_row, e_row, o_row = GODAN_ROWS[tail]
-        for add, name in ((te, "te"), (ta, "past"),
-                          (a_row + "ない", "neg"), (i_row, "stem"),
-                          (e_row + "ば", "cond"), (o_row + "う", "vol"),
-                          (e_row + "る", "pot"),
-                          (a_row + "れる", "pass"), (a_row + "せる", "caus"),
-                          (e_row, "imp"),
-                          (i_row + "ます", "polite"),
-                          (i_row + "ました", "polite-past"),
-                          (i_row + "ません", "polite-neg")):
-            got = _pair(surface, reading, 1, add)
-            if got:
-                out.append((*got, name))
-        got_te = _pair(surface, reading, 1, te)
-        if got_te:
-            out.extend(_with_auxiliaries(*got_te))
-
-    elif cls == GODAN_IKU:
         # 行く は く-godan in every form EXCEPT the て and た ones, where it
         # takes って/った rather than the regular いて/いた. The regular rule
         # generates 行いて, which is not a word, so the real 行って never
         # entered the index at all -- and 行って then resolved to the only
         # other verb that produces it, 行う (おこなって). 行く is one of the
         # commonest verbs in sung Japanese, so this mattered everywhere.
-        if tail != "く":
-            return out
-        a_row, i_row, e_row, o_row = GODAN_ROWS["く"]
-        for add, name in (("って", "te"), ("った", "past"),
-                          (a_row + "ない", "neg"), (i_row, "stem"),
-                          (e_row + "ば", "cond"), (o_row + "う", "vol"),
-                          (e_row + "る", "pot"),
-                          (a_row + "れる", "pass"), (a_row + "せる", "caus"),
-                          (e_row, "imp"),
-                          (i_row + "ます", "polite"),
-                          (i_row + "ました", "polite-past"),
-                          (i_row + "ません", "polite-neg")):
+        if cls == GODAN_IKU:
+            if tail != "く":
+                return out
+            te, ta = "って", "った"
+        else:
+            te, ta = GODAN_TE[tail]
+        a_row, i_row, e_row, o_row = GODAN_ROWS[tail]
+        adds = [(te, "te"), (ta, "past"),
+                (a_row, "neg-stem"), (i_row, "stem"),
+                (e_row + "ば", "cond"), (o_row + "う", "vol"),
+                (e_row + "る", "pot"),
+                (a_row + "れる", "pass"), (a_row + "せる", "caus"),
+                (e_row, "imp"),
+                (i_row + "ます", "polite"),
+                (i_row + "ました", "polite-past"),
+                (i_row + "ません", "polite-neg")]
+        adds += [(a_row + t, name) for t, name in _NEG_TAILS]
+        for add, name in adds:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
-        got_te = _pair(surface, reading, 1, "って")
-        if got_te:
-            out.extend(_with_auxiliaries(*got_te))
 
     elif cls == ADJ_I:
         if tail != "い":
             return out
-        for add, name in (("くて", "te"), ("かった", "past"),
-                          ("くない", "neg"), ("く", "adv"),
-                          ("ければ", "cond")):
+        adds = [("くて", "te"), ("かった", "past"),
+                ("く", "adv"), ("", "adj-stem"), ("ければ", "cond"),
+                ("くない", "neg"), ("くなかった", "neg-past"),
+                ("くなくて", "neg-te"), ("くなければ", "neg-cond")]
+        for add, name in adds:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
@@ -211,16 +190,16 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
         # first when it is already there and the stem is what gets suffixed.
         if surface.endswith("する") and reading.endswith("する"):
             surface, reading = surface[:-2], reading[:-2]
-        for add, name in (("する", "base"), ("して", "te"), ("した", "past"),
-                          ("しない", "neg"), ("し", "stem"),
-                          ("すれば", "cond"), ("しよう", "vol"),
-                          ("できる", "pot")):
+        adds = [("する", "base"), ("して", "te"), ("した", "past"),
+                ("し", "stem"), ("すれば", "cond"), ("しよう", "vol"),
+                ("できる", "pot"),
+                ("します", "polite"), ("しました", "polite-past"),
+                ("しません", "polite-neg")]
+        adds += [("し" + t, name) for t, name in _NEG_TAILS]
+        for add, name in adds:
             got = _pair(surface, reading, 0, add)
             if got:
                 out.append((*got, name))
-        got_te = _pair(surface, reading, 0, "して")
-        if got_te:
-            out.extend(_with_auxiliaries(*got_te))
 
     elif cls == KURU:
         # 来る is irregular in the READING while the kanji stays put, so the
@@ -231,7 +210,28 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
                                          ("来て", "きて", "te"),
                                          ("来た", "きた", "past"),
                                          ("来ない", "こない", "neg"),
-                                         ("来れば", "くれば", "cond")):
+                                         ("来なかった", "こなかった", "neg-past"),
+                                         ("来れば", "くれば", "cond"),
+                                         ("来ます", "きます", "polite"),
+                                         ("来ました", "きました", "polite-past")):
                 out.append((head_s + s_tail, head_r + r_tail, name))
+
+    # SECONDARY CONJUGATION. The potential, passive and causative are ichidan
+    # verbs in their own right, and sung Japanese conjugates them further as a
+    # matter of course: 戻れない (potential negative), 愛された (passive past),
+    # 葬られて (passive te-form, which the suffix machinery then extends to
+    # 葬られていた). ichiran's conjugation graph chains these via its `via`
+    # column; one explicit level reproduces the part of the graph that occurs
+    # in lyrics. The form name keeps its ancestry ("pot-neg") so the suffix
+    # machinery can still recognise the tail it attaches to.
+    for s, r, name in [f for f in out if f[2] in ("pot", "pass", "caus")]:
+        if not s.endswith("る"):
+            continue
+        for tail, sub in (("て", "te"), ("た", "past"), ("", "stem"),
+                          ("ます", "polite"), ("ました", "polite-past"),
+                          ("れば", "cond"),
+                          ("ない", "neg"), ("なかった", "neg-past"),
+                          ("なくて", "neg-te"), ("なければ", "neg-cond")):
+            out.append((s[:-1] + tail, r[:-1] + tail, f"{name}-{sub}"))
 
     return out

@@ -10,10 +10,17 @@ for grammar and wrong for idiom. Handed 夜が明けても it produces 夜 (よ�
 inside this phrase -- while JMdict simply has 夜が明ける as an entry.
 
 The difference is a dictionary, and the search over it. This package supplies
-both: a JMdict index including generated inflections, and ichiran's best-path
-search to choose among the matches.
+the whole of ichiran's mechanism:
 
-    units_and_words(text) -> [(surface, kana), ...]
+    conjugate.py    every inflected form, generated into the index
+    suffixes.py     auxiliaries attached DURING the search (〜ていた, 〜ちゃう,
+                    〜なきゃ), each with ichiran's connector and score
+    counters.py     numbers and counters computed, not looked up: 10冊 is
+                    じゅっさつ by euphonic rule
+    scoring.py      calc-score's arithmetic, constants verbatim
+    segmenter.py    the best-path search that weighs all of the above
+
+    analyse_words(text) -> [(surface, kana), ...]
 
 is the entry point, shaped to match `readings.analyse_words` so the rest of the
 pipeline neither knows nor cares which engine produced its readings.
@@ -30,10 +37,10 @@ from .segmenter import Index, Segmenter
 
 __all__ = ["analyse_words", "available", "index_path", "load"]
 
-# The index ships with the package: 8 MB beside a 630 MB acoustic model is not
-# worth a download step, and shipping it means the tool works offline and the
-# readings are pinned to the release rather than to whenever JMdict was last
-# fetched.
+# The index ships with the package: 25 MB beside a 630 MB acoustic model is
+# not worth a download step, and shipping it means the tool works offline and
+# the readings are pinned to the release rather than to whenever JMdict was
+# last fetched.
 INDEX_NAME = "jmdict-index.tsv.gz"
 
 # Foreign words are left whole. JMdict contains single-letter entries, so
@@ -167,6 +174,13 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
                 # returned as itself so the caller can decide -- readings.py
                 # hands these to UniDic, which always has an answer.
                 out.append((surface, ""))
+                continue
+            if s.parts:
+                # A compound whose connector is a space: one dictionary match,
+                # several sung words (学生です is "gakusei desu"). The suffix
+                # machinery decided the split; it is passed through as-is.
+                out.extend((p_surface, jaconv.kata2hira(p_kana))
+                           for p_surface, p_kana in s.parts)
                 continue
             parts = _subdivide(seg, s.entry)
             if parts:

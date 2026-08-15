@@ -27,8 +27,11 @@ def reading_of(text: str) -> str:
 # --- set phrases: the reason this engine exists --------------------------------
 
 def test_a_set_phrase_is_one_word_with_its_own_reading():
-    """夜 is よる alone and よ inside this phrase. UniDic gives よる both times."""
-    assert words("夜が明けても")[0] == ("夜が明けて", "よがあけて")
+    """夜 is よる alone and よ inside this phrase. UniDic gives よる both times.
+
+    ても rides on the te-form as one sung word -- the suffix machinery's
+    connector, same as 消えても being kietemo."""
+    assert words("夜が明けても")[0] == ("夜が明けても", "よがあけても")
 
 
 def test_tomoni_is_one_word():
@@ -131,7 +134,7 @@ def test_an_ordinary_word_is_never_split_apart():
 
 def test_a_join_that_carries_the_reading_survives():
     """夜 is よ only inside the phrase, so splitting would change the kana."""
-    assert words("夜が明けても")[0] == ("夜が明けて", "よがあけて")
+    assert words("夜が明けても")[0] == ("夜が明けても", "よがあけても")
 
 
 def test_an_inflected_form_is_never_split():
@@ -152,3 +155,70 @@ def test_a_lone_kana_is_only_split_off_if_it_is_a_particle():
     nonsense as words. JMdict tags ま as a particle, so the tag cannot be
     trusted for this and an explicit list is used."""
     assert words("そのまま") == [("そのまま", "そのまま")]
+
+
+# --- the suffix machinery (dict-grammar.lisp port) ------------------------------
+
+def test_te_auxiliaries_join_into_one_sung_word():
+    """狂っていた is one thing a singer sings; it was once 狂って|い|た with
+    い read as a counter. The auxiliary conjugates too, and the suffix cache
+    is generated from its conjugation, so every variant joins."""
+    assert words("狂っていた") == [("狂っていた", "くるっていた")]
+    assert words("狂ってる") == [("狂ってる", "くるってる")]
+    assert words("消えても") == [("消えても", "きえても")]
+
+
+def test_a_space_connector_keeps_two_sung_words():
+    """ichiran's :connector " ": ください is one MATCH but two sung words."""
+    assert words("待ってください") == [("待って", "まって"),
+                                       ("ください", "ください")]
+    assert words("歌ってくれた") == [("歌って", "うたって"),
+                                     ("くれた", "くれた")]
+
+
+def test_colloquial_abbreviations_read_through_their_full_form():
+    """なきゃ is なければ and ん is ない; the abbreviation replaces the tail of
+    the inflected form, so the reading comes from the real word."""
+    assert words("行かなきゃ") == [("行かなきゃ", "いかなきゃ")]
+    assert words("分からん") == [("分からん", "わからん")]
+    assert words("知らねえ") == [("知らねえ", "しらねえ")]
+
+
+def test_tai_attaches_to_the_stem_and_conjugates():
+    assert words("会いたい") == [("会いたい", "あいたい")]
+    assert words("会いたかった") == [("会いたかった", "あいたかった")]
+
+
+def test_secondary_conjugation_stays_one_word():
+    """The potential and passive are verbs of their own and conjugate on:
+    戻れない once split into 戻れ + ない."""
+    assert words("戻れない") == [("戻れない", "もどれない")]
+    assert words("忘れられていた") == [("忘れられていた", "わすれられていた")]
+
+
+# --- numbers and counters (numbers.lisp / dict-counters.lisp port) --------------
+
+def test_counters_read_with_euphonics_no_dictionary_lists():
+    """10冊 is in no dictionary; the reading is computed: 十 geminates before
+    さ and 冊 keeps its kana. 4時 is よじ by the counter's own exception."""
+    assert reading_of("10冊") == "じゅっさつ"
+    assert reading_of("４時") == "よじ"
+    assert reading_of("1人") == "ひとり"
+    assert reading_of("2人") == "ふたり"
+
+
+def test_the_rabbits_are_counted_correctly():
+    """ichiran's author's own example: 羽 voices for 3 and geminates for 6/10."""
+    assert reading_of("１羽２羽３羽４羽") == "いちわにわさんばよんわ"
+
+
+def test_dates_read_as_dates():
+    """月 as a month is がつ and only for 1-12; days have their kun readings."""
+    assert reading_of("4月4日") == "しがつよっか"
+    assert reading_of("2014年") == "にせんじゅうよねん"
+
+
+def test_final_particles_do_not_appear_mid_line():
+    """す means something only at the end of an utterance, so 学生です must
+    not end in the particle す -- it is the copula です."""
+    assert ("です", "です") in words("君は学生です")

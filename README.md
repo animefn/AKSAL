@@ -391,14 +391,21 @@ reading:
 
 ```
                 ichiran                unidic
-夜が明けても    yogaakete mo           yoru ga akete mo
+夜が明けても    yogaaketemo            yoru ga akete mo
+狂っていた      kurutteita             kurutte i ta
 一度            ichido                 ichi do
 と共に          totomoni               to tomoni
+10冊            jussatsu               10 satsu
 1人             hitori                 1nin
 ```
 
-The last one is the sharpest: `unidic` leaves the digit unread, so the aligner
+The last two are the sharpest: `unidic` leaves the digit unread, so the aligner
 receives a character it cannot pronounce and the mora is lost without a warning.
+`ichiran` computes number+counter readings — 10冊 is in no dictionary, but 十
+geminates before さ and out comes じゅっさつ, euphonics and all — and attaches
+auxiliaries the way ichiran itself does: 狂っていた is one sung word because the
+suffix machinery joined it during the search, while 待ってください stays two
+words because ください carries a space connector.
 
 Anything the dictionary does not cover falls back to `unidic`, which always has
 an answer — every mora has to become a karaoke cell, so a missing reading is a
@@ -411,9 +418,11 @@ was contributing coarseness and no reading. Where the join carries the reading
 it survives: 夜が明けて stays whole because 夜 is よ only inside the phrase.
 Inflected forms (歌われる) and kanji expressions (と共に) are never split.
 
-That leaves boundaries slightly coarser than a human timer's — 11 run-on words
-against `unidic`'s 5 over the hand-timed set, down from 19 before the rule.
-It affects `--group word` only; syllable grouping, the default, is unaffected.
+That leaves boundaries slightly coarser than a human timer's. Measured over
+2,152 hand-timed karaoke lines, the engine agrees with the human's sound
+boundaries at F1 0.959; what remains is mostly convention (whether の or は
+attaches to the word before it), which varies between kara makers anyway. It
+affects `--group word` only; syllable grouping, the default, is unaffected.
 
 ### Readings
 
