@@ -51,6 +51,13 @@ dependencies = [
     # unidic-lite at all, so the aligner receives a character it cannot
     # pronounce and nothing in the output looks wrong.
     "yosina==3.0.0",
+    # A SECOND OPINION on readings, never the answer. Measured over the corpus
+    # it is worse than unidic-lite overall (0.934 against 0.963) and renders っ
+    # as "tsu" -- but its dictionary lineage is independent, so it disagrees
+    # exactly where a reading is worth checking. cutlet, Sudachi and full
+    # UniDic were all measured and all failed that: they run the same UniDic
+    # lineage and tie with us on 42-47 of 48 lines.
+    "pykakasi==2.3.0",
     "jaconv==0.4.1",
 ]
 

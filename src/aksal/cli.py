@@ -351,6 +351,17 @@ def cmd_phase1(args) -> None:
             weak = sum(1 for c in grp if c["conf"] < 0.02)
             if len(grp) and weak / len(grp) > 0.7:
                 flag = ",".join(filter(None, [flag, "low-confidence"]))
+            # Readings a second engine disputes AND the audio decides against.
+            # Flagged, never changed: measured over six songs the audio picked
+            # the rival five times and was right four of them, so switching
+            # automatically would corrupt one correct reading to fix four.
+            if source != "romaji":
+                pairs = readings.analyse_words(readings.normalise_surface(surface))
+                owner = [w for w, (_s, k) in enumerate(pairs) for _ in k]
+                for surf, ours_r, theirs in aligner.disputed_readings(
+                        lp, grp, pairs, owner, readings.rival_reading):
+                    flag = ",".join(filter(
+                        None, [flag, f"reading?{surf}:{ours_r}/{theirs}"]))
         table.append((line_no, flag, surface, reading))
     readings.write_table(proj.readings_tsv, table)
 

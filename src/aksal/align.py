@@ -241,6 +241,55 @@ class Aligner:
         inv = {v: k for k, v in self.vocab.items()}
         return "".join(inv.get(i, "") for i in kept)
 
+    def disputed_readings(self, lp: torch.Tensor, cells: list[dict],
+                          words: list[tuple[str, str]], owner: list[int],
+                          rival_of) -> list[tuple[str, str, str]]:
+        """Words where an independent engine disagrees and the AUDIO agrees with it.
+
+        Returns (surface, ours, theirs) for each. Nothing is changed -- the row
+        is flagged and the user decides. That asymmetry is deliberate and is
+        what the measurement supports: over six songs the audio preferred the
+        rival five times and was right four of those, so auto-switching would
+        have corrupted one correct reading to fix four wrong ones. A flag costs
+        a glance at a table the user already opens.
+
+        Each candidate is scored over the word's OWN span, which is the only
+        form of this comparison that works. Scoring against the whole track
+        instead lets a candidate find a better-matching place elsewhere in the
+        song, which measured as the true reading losing 34 times out of 34.
+        """
+        out: list[tuple[str, str, str]] = []
+        for w, (surface, ours) in enumerate(words):
+            theirs = rival_of(surface, ours)
+            if not theirs:
+                continue
+            idx = [i for i, o in enumerate(owner) if o == w]
+            starts = [cells[i]["start"] for i in idx
+                      if i < len(cells) and cells[i].get("start") is not None]
+            if not starts:
+                continue
+            nxt = next((cells[j]["start"] for j in range(idx[-1] + 1, len(cells))
+                        if cells[j].get("start") is not None), None)
+            t0 = min(starts)
+            t1 = nxt if nxt is not None else t0 + 0.25 * len(idx)
+            f0 = max(int(t0 / SEC_PER_FRAME), 0)
+            f1 = min(int(t1 / SEC_PER_FRAME) + 1, lp.shape[0])
+            if f1 - f0 < len(idx) + 2:
+                continue
+            crop = lp[f0:f1]
+            a = self._mean_conf(crop, ours)
+            b = self._mean_conf(crop, theirs)
+            if a is not None and b is not None and b > a:
+                out.append((surface, ours, theirs))
+        return out
+
+    def _mean_conf(self, crop: torch.Tensor, kana: str) -> float | None:
+        from . import moras
+
+        cells = self.align_units(crop, moras.split(kana))
+        got = [c["conf"] for c in cells if c.get("conf")]
+        return float(np.mean(got)) if got else None
+
     def align_units(self, lp: torch.Tensor, units: list[str],
                     frame_offset: int = 0) -> list[dict]:
         """Align `units` against an emission matrix; times are absolute seconds."""

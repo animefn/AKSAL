@@ -217,6 +217,12 @@ wrong. `DELETE` in the second column removes a built-in entry:
 誰か	DELETE
 ```
 
+Rows can also be flagged `reading?`. That means a second analyser read the
+word differently AND the audio agreed with it -- so the singer is probably not
+singing what the table says. Nothing is changed for you: measured over six
+songs the audio picked the alternative five times and was right four of them,
+so switching automatically would corrupt one correct reading to fix four.
+
 **`OP01.readings.tsv` is worth opening.** Fix any row that is flagged, and any
 reading the singer does not use — analysers do not know that 永遠 is often sung
 とわ. **Spaces in the reading column mark word breaks**, and they set where the

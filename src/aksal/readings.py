@@ -285,6 +285,73 @@ PHRASES: dict[str, str | None] = {
 
 MAX_PHRASE_WORDS = 5
 
+_RIVAL = None
+_RIVAL_TRIED = False
+
+
+def _rival_analyser():
+    """An independent opinion on readings, or None if pykakasi is absent.
+
+    Independent is the whole requirement. cutlet, Sudachi and full UniDic were
+    all measured and all failed it -- they run the same UniDic lineage and tie
+    with us on 42-47 lines out of 48, so they cannot contribute a second
+    opinion. pykakasi has its own dictionary lineage and disagrees where that
+    lineage differs, which is exactly where a reading is worth checking.
+
+    Its overall quality is WORSE than ours (0.934 against 0.963 on the corpus,
+    and it renders っ as "tsu"), so nothing it says is ever adopted. It only
+    nominates; the audio decides.
+    """
+    global _RIVAL, _RIVAL_TRIED
+    if not _RIVAL_TRIED:
+        _RIVAL_TRIED = True
+        try:
+            import pykakasi
+
+            _RIVAL = pykakasi.kakasi()
+        except Exception:                   # pragma: no cover - optional
+            _RIVAL = None
+    return _RIVAL
+
+
+def rival_reading(surface: str, ours: str) -> str | None:
+    """A second engine's reading for one word, when it is worth arbitrating.
+
+    Returns None unless every condition holds, because each one removes a class
+    of disagreement that is not a real dispute:
+
+      * the surface contains kanji -- kana spells its own reading, so there is
+        nothing to arbitrate
+      * it is not a particle -- を/は/へ are converted to their SUNG form here
+        on purpose while pykakasi keeps the written one. Measured, that alone
+        produced 15 of 16 apparent disputes, and since を and お are the same
+        sound the audio cannot separate them anyway
+      * the two readings have the same mora count -- comparing different
+        lengths against audio does not work at all. CTC prefers the shorter
+        candidate whatever was sung, because fewer tokens means fewer
+        constraints and blank frames are nearly free. Equal-length pairs score
+        88%; unequal ones are a coin flip or worse.
+    """
+    from . import moras
+
+    if not KANJI.search(surface) or surface in "をはへ":
+        return None
+    kks = _rival_analyser()
+    if kks is None:
+        return None
+    try:
+        segs = kks.convert(surface)
+    except Exception:                       # pragma: no cover
+        return None
+    if len(segs) != 1:
+        return None
+    theirs = jaconv.kata2hira(segs[0].get("kana") or "")
+    if not theirs or theirs == ours:
+        return None
+    if len(moras.split(theirs)) != len(moras.split(ours)):
+        return None
+    return theirs
+
 _USER_PHRASES_LOADED = False
 
 
