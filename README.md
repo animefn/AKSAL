@@ -14,7 +14,9 @@ aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.
 aksal phase2 OP01.lines.ass
 ```
 
-*أكسل — "lazier". It does the tedious part.*
+*أكسل — "lazier"*
+
+*A lazier way to create karaoke for anime songs.*
 
 **→ [USAGE.md](USAGE.md) — every workflow, with examples.**
 
@@ -48,7 +50,7 @@ clustering them by offset recovers the entire edit structure in one cheap pass.
 
 
 
-### How to create karaoke effects in general:
+## How to create karaoke effects in general:
 - Step 0 (preparation): Look up kara.moe — if they already have a k-split karaoke for your song then you're done! Download it, jump to step 3 and call it a day. If not, then you need to find the lyrics for your song and create the karaoke yourself from them. There are several ways to find the lyrics: you can read the credits on screen and type the romaji yourself, or look up the web for the lyrics already written out (in Japanese) and then use some assistant tooling to generate romaji out of them, or look up the web for the romaji lyrics directly if they exist (the common and simplest way for fairly well known anime).
 - Step 1: Once you have the lyrics, you time each line for your video.
 - Step 2:
@@ -461,10 +463,6 @@ project because token order is part of the checkpoint contract.
   accepted, because the top search result for a song is routinely a MAD or a
   cover
 
-**Measured**, against hand-timed karaoke over eight songs on three shows:
-0.059 s median syllable error given correct lines, 73–86% of syllables inside
-100 ms. See `tests/` for the harness that produces those numbers.
-
 ---
 
 ## Limitations
@@ -476,11 +474,11 @@ an error.
   written without spaces, and different timers, lyric sites and analysers all
   split defensibly and differently. AKSAL agrees with human karaoke authors on
   ~95% of sound boundaries; the rest is convention, not error. With romaji
-  lyrics **your own spacing is authoritative** and none of this applies.
+  lyrics **the word spacing is actually tricky and not always unique** and none of this applies.
 - **Romanisation styles differ.** Long vowels alone can be written `o`, `ou`,
   `oo` or `ō`, and particles は/へ/を romanise differently by house style.
   AKSAL writes one consistent style; if yours differs, supply romaji lyrics
-  and your spelling is kept verbatim.
+  and your spelling is kept as-is.
 - **Some words are legitimately read several ways, and lyricists invent more**
   ([gikun](https://www.japanesewithanime.com/2017/12/gikun.html)): no analyser
   can know what the singer chose. Disputed and unreadable cases are flagged in

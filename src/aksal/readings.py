@@ -42,9 +42,29 @@ def tagger():
         import unidic_lite
 
         global _TAGGER_ARGS
-        _TAGGER_ARGS = f"-d {Path(unidic_lite.DICDIR).as_posix()}"
+        _TAGGER_ARGS = tagger_args(unidic_lite.DICDIR)
         _TAGGER = fugashi.Tagger(_TAGGER_ARGS)
     return _TAGGER
+
+
+def tagger_args(dicdir: str | Path) -> str:
+    """MeCab arguments selecting `dicdir`, quoted so a space cannot split it.
+
+    MeCab takes its arguments as ONE STRING and tokenises it on whitespace, so
+    an unquoted path breaks in half the moment it contains a space -- and the
+    halves become two separate arguments, the second of which is nonsense.
+    Measured: `-d C:/a b/dicdir` arrives as [b'-d', b'C:/a', b'b/dicdir'].
+
+    That is not an exotic case. It fires on `C:/Program Files`, on any user
+    folder with a space in the name, and on the folder a browser creates when
+    you download the same archive twice -- `aksal-windows (1)`. It was reported
+    from exactly that path.
+
+    MeCab's tokeniser does honour double quotes, which is the whole fix. A
+    literal double quote in a path cannot be handled and cannot occur: Windows
+    forbids the character in filenames outright.
+    """
+    return f'-d "{Path(dicdir).as_posix()}"'
 
 
 # Furigana as lyric sheets print it: kanji, then a parenthesised all-kana gloss.
