@@ -86,3 +86,10 @@ aksal = "aksal.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# The JMdict index ships with the package rather than being downloaded. It is
+# 9 MB beside a 630 MB acoustic model, so a download step would add a failure
+# mode for no saving -- and shipping it pins the readings to the release
+# instead of to whenever JMdict happened to be fetched.
+[tool.setuptools.package-data]
+aksal = ["data/*.tsv.gz"]

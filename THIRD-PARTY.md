@@ -31,6 +31,23 @@ Downloaded on first run. Not bundled.
 | [ipadic](https://github.com/polm/ipadic-py) | a second opinion on compound nouns, where unidic splits set phrases and gets their reading wrong | see package |
 | [jaconv](https://github.com/ikegami-yukino/jaconv) | kana conversion | MIT |
 
+### The dictionary analyser
+
+`src/aksal/ichiran/` is a partial port of **[ichiran](https://github.com/tshatrov/ichiran)**
+by Timofei Shatrov (**MIT**), the engine behind [ichi.moe](https://ichi.moe/).
+Ported are its best-path search (`find-best-path`), its scoring (`calc-score`,
+`cull-segments`) and its constants — the gap penalty, the score cutoffs and the
+length-coefficient table are the author's own values, not re-derived. Its
+database layer, its per-word split rules (`dict-split.lisp`) and its counter
+tables are **not** ported.
+
+The readings come from **[JMdict](https://www.edrdg.org/jmdict/j_jmdict.html)**,
+property of the [Electronic Dictionary Research and Development
+Group](https://www.edrdg.org/), used under **CC BY-SA 4.0**. The file shipped at
+`src/aksal/data/jmdict-index.tsv.gz` is derived from it — entries paired with
+their readings, plus generated inflections — and is redistributed under the same
+licence.
+
 **cutlet**, by the same author as fugashi, is not a dependency but shaped the
 work: reading its spacing rules found a missing prefix rule in ours. Where the
 two disagree it is deliberate — cutlet targets readable prose romaji, AKSAL

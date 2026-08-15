@@ -107,6 +107,10 @@ def main() -> int:
         # though every module imported fine. The weights themselves are NOT
         # bundled -- they download on first use like the acoustic model.
         "--collect-data", "demucs",
+        # The JMdict index. It is package data rather than a module, so nothing
+        # imports it and a static analyser cannot see it -- without this the
+        # frozen build starts fine and then reads every set phrase wrong.
+        "--collect-data", "aksal",
         str(ROOT / "packaging" / "entry.py"),
     ]
     for mod in EXCLUDE:

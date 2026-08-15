@@ -864,6 +864,16 @@ def build_parser() -> argparse.ArgumentParser:
     pf.set_defaults(func=cmd_find)
 
     for sp in (p1, p2):
+        sp.add_argument("--analyser", "--analyzer", dest="analyser",
+                        choices=readings.ENGINES, default="ichiran",
+                        help="which engine decides word boundaries and "
+                             "readings (default: ichiran). ichiran looks words "
+                             "up in JMdict and picks the best parse, so it "
+                             "reads set phrases as units -- 夜が明ける is "
+                             "yo ga akeru, not yoru ga akeru. unidic is the "
+                             "morphological analyser used by earlier versions. "
+                             "Either way, anything the dictionary does not "
+                             "cover falls back to unidic.")
         sp.add_argument("--model", default=None,
                         help="override the acoustic model, e.g. "
                              "hiragana-asr:D:/models/custom.pt")
@@ -951,6 +961,12 @@ def main(argv: list[str] | None = None) -> int:
             pass
 
     args = build_parser().parse_args(argv)
+
+    # Selected before any work, so every reading in the run comes from the same
+    # engine. `find` has no --analyser of its own: it hands off to phase1,
+    # which does.
+    if getattr(args, "analyser", None):
+        readings.set_engine(args.analyser)
 
     # Checked once, up front. Every audio step shells out to ffmpeg, so finding
     # out it is missing forty seconds into a fingerprint search is worse than

@@ -579,12 +579,20 @@ def test_the_corpus_wide_run_on_count_does_not_regress():
     import sys
     from pathlib import Path
 
+    import os
+
     audit = Path(__file__).resolve().parents[2] / "tests" / "segaudit.py"
     if not audit.exists():                      # corpus not present in a clone
         pytest.skip("segmentation corpus not available")
+    # The engine has to be named explicitly: this runs in a SUBPROCESS, which
+    # inherits no fixture, so without it the audit silently uses the shipped
+    # default while this test believes it is measuring UniDic. The ceiling
+    # below was calibrated against UniDic's boundaries and means nothing for
+    # another engine's.
+    env = dict(os.environ, AKSAL_ANALYSER="unidic")
     out = subprocess.run([sys.executable, str(audit)], capture_output=True,
                          text=True, encoding="utf-8", errors="replace",
-                         cwd=audit.parent).stdout
+                         cwd=audit.parent, env=env).stdout
     total = int(out.rsplit("corpus:", 1)[1].strip())
     assert total <= 5, f"segmentation regressed to {total} run-on words\n{out}"
 

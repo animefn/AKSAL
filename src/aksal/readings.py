@@ -8,6 +8,7 @@ splitting, merging or reordering lines between phases.
 """
 from __future__ import annotations
 
+import os
 import re
 import unicodedata
 from functools import lru_cache
@@ -182,7 +183,69 @@ WORD_READINGS: dict[str, str] = {
 }
 
 
+# Which engine decides word boundaries and readings.
+#
+#   ichiran   JMdict entries chosen by ichiran's best-path search. The default,
+#             because a dictionary knows things a morphological analyser cannot
+#             derive: 夜が明ける is one entry read よがあける, where short-unit
+#             analysis can only produce 夜 (よる) + が + 明ける.
+#   unidic    the morphological analyser alone, which is what earlier releases
+#             did. Kept because it is better at rare vocabulary and because a
+#             switch costs nothing.
+#
+# Neither is trusted blindly: an ichiran run still hands anything its
+# dictionary does not cover to UniDic, which always has an answer.
+ENGINES = ("ichiran", "unidic")
+# AKSAL_ANALYSER selects the engine for a process that has no CLI of its own --
+# a test harness, or anything shelling out to a helper script. Without it the
+# choice cannot cross a process boundary, and a subprocess silently reverts to
+# the default while its caller believes it set something else.
+ENGINE = os.environ.get("AKSAL_ANALYSER", "ichiran")
+if ENGINE not in ENGINES:
+    ENGINE = "ichiran"
+
+
+def set_engine(name: str) -> None:
+    if name not in ENGINES:
+        raise ValueError(f"unknown analyser {name!r}; choose from {ENGINES}")
+    global ENGINE
+    ENGINE = name
+
+
 def analyse_words(text: str) -> list[tuple[str, str]]:
+    """Tokenise a line into (surface, kana) pairs, via the selected engine."""
+    if ENGINE == "ichiran":
+        got = _analyse_ichiran(text)
+        if got is not None:
+            return got
+    return analyse_words_unidic(text)
+
+
+def _analyse_ichiran(text: str) -> list[tuple[str, str]] | None:
+    """The dictionary path, or None when it is unavailable.
+
+    Characters no dictionary entry covers come back with an empty reading, and
+    those spans go to UniDic rather than being dropped: every mora becomes a
+    karaoke cell that has to be aligned, so a missing reading is not a degraded
+    result but a broken line.
+    """
+    try:
+        from . import ichiran
+    except ImportError:                          # pragma: no cover
+        return None
+    if not ichiran.available():
+        return None
+
+    out: list[tuple[str, str]] = []
+    for surface, kana in ichiran.analyse_words(text):
+        if kana:
+            out.append((surface, WORD_READINGS.get(surface, kana)))
+        else:
+            out.extend(analyse_words_unidic(surface))
+    return out or None
+
+
+def analyse_words_unidic(text: str) -> list[tuple[str, str]]:
     """Tokenise a line into (surface, kana) pairs, one per word.
 
     The word boundaries matter as much as the readings: romaji rendered without

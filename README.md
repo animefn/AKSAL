@@ -310,6 +310,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--insert-romaji` / `--no-insert-romaji` | **on** | Prefix each line with its romaji as `{*RO*…*RO*}`. Invisible when rendered, visible in Aegisub's edit box — you are about to correct these lines, so you need to tell them apart. |
 | `--refresh-lyrics` | off | Re-fetch even if a cached copy exists. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
+| `--analyser` | `ichiran` | `ichiran` or `unidic` — which engine decides word boundaries and readings. See below. |
 | `--lead-in SEC` | `0` | Shift every cue earlier. |
 | `--no-lrc-hints` | off | Ignore LRCLIB synced line timings even when verified. |
 | `--lrc-query TEXT` | — | Override the search string used to find those timings. |
@@ -373,6 +374,36 @@ Both are handled, but matter if you swap models:
 
 Any Japanese **CTC** model works, but it must be CTC — Whisper has no CTC head
 and cannot be used for alignment.
+
+### Which analyser reads the Japanese
+
+Two engines, `--analyser`:
+
+| | how it decides |
+|---|---|
+| **`ichiran`** (default) | Looks words up in **JMdict** and picks the best parse, using a port of [ichiran](https://github.com/tshatrov/ichiran)'s search — the engine behind ichi.moe. Because it is a dictionary, it knows set phrases as units. |
+| `unidic` | The morphological analyser used by earlier versions. Splits text into short units and gives each its citation reading. |
+
+The difference is not tuning, it is structural. A morphological analyser cannot
+know that 夜 is read **よ** inside 夜が明ける — it segments into short units, and
+夜 on its own is よる. A dictionary that contains 夜が明ける simply has the right
+reading:
+
+```
+夜が明けても    ichiran  yo ga akete mo       unidic  yoru ga akete mo
+一度            ichiran  ichido               unidic  ichi do
+と共に          ichiran  totomoni             unidic  to tomoni
+1人             ichiran  hitori               unidic  (digit unread)
+```
+
+Anything the dictionary does not cover falls back to `unidic`, which always has
+an answer — every mora has to become a karaoke cell, so a missing reading is a
+broken line rather than a slightly worse one.
+
+**A known trade:** dictionary units are coarser than a karaoke timer's words —
+ように and そのまま come back whole. This affects `--group word` only; syllable
+grouping, the default, is unaffected. Use `--analyser unidic` if you prefer the
+finer boundaries.
 
 ### Readings
 
@@ -482,25 +513,19 @@ an error.
 - **Some words are legitimately read several ways, and lyricists invent more**
   ([gikun](https://www.japanesewithanime.com/2017/12/gikun.html)): no analyser
   can know what the singer chose. Disputed and unreadable cases are flagged in
-  the readings TSV rather than guessed silently — fixing a flagged reading
-  there is expected workflow, not failure.
+  the readings TSV rather than guessed silently.
 - **Full-version lyrics against a shorter video need `--reference`.** The
   aligner cannot discard lines on its own — only the fingerprint match against
   a reference can decide which lines are in the cut. That works when the video
   uses pieces of the song in order; an edit that reorders them (first verse,
   then the ending) can defeat the mapping, and then trimming the lyrics by
   hand is the fix. Without a reference, lyrics that cannot fit the window are
-  refused, and lyrics denser than any measured real cut get a loud warning.
-- **A repeated chorus can be mapped to the wrong occurrence.** Both instances
-  fingerprint identically. Detected and resolved in favour of the earlier one,
-  which keeps the map consistent but can cost the lines in the disputed span.
+  timed wrongly as the aligner will force it.
 - **A lyric sheet that omits something sung loses those lines.** If the
-  broadcast sings a hook the published lyrics do not print, no reference can
-  find it.
-- **Sustained vowels and melisma** are where syllable timing still smears.
+  anime version of song sings a hook the published lyrics do not print, no reference can find it. So always make sure to use romaji that really matches the video not just generic romaji of the full version of the song.
+- **Sustained vowels and melisma (basically extended vowels at end of sentences when singers "scream")** These tend to terminate earlier in our automated sync.
 - **Japanese only**, by construction: the model's vocabulary is kana.
-- **The published numbers are without separation.** `--separate-audio` measured
-  as a wash and is off by default.
+
 
 ---
 
@@ -515,9 +540,6 @@ complementary half, not yet built, is deciding *which* lines are sung: decode
 the window freely, then align the lyric sheet against that hypothesis as a
 text-to-text problem, where skipping is free.
 
-**More ground truth.** Every segmentation rule here is validated against roughly
-700 words of hand-timed karaoke. That is thin. `tests/segaudit.py` scales to
-more of it unchanged, and more of it would settle more than any further rule
-would.
+**More ground truth.** Every segmentation rule here is validated against roughly 700 words of hand-timed karaoke. We hope to improve this in the future with bug-reports and more testing.
 
-**Cross-platform builds.** Windows only today.
+**Cross-platform builds.** Windows only today. Hoping to provide mac and linux builds in the future. 
