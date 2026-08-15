@@ -54,6 +54,13 @@ EXCLUDE = [
     # classical ML.
     "cv2", "av", "onnxruntime", "onnx", "sklearn", "nltk", "sentencepiece",
     "PIL", "timm", "accelerate", "datasets", "evaluate",
+    # 212 MB reached ONLY through transformers' BertJapaneseTokenizer, which
+    # nothing here uses -- the acoustic model is wav2vec2. Sudachi is not a
+    # dependency of AKSAL at all; it was measured as a reading engine and
+    # rejected. Without this the build silently grows by a sixth on any machine
+    # that happens to have it installed, which also makes the artefact size
+    # depend on the builder's environment rather than on the project.
+    "sudachipy", "sudachidict_core", "sudachidict_full", "sudachidict_small",
 ]
 
 HIDDEN = [
