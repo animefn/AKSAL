@@ -83,6 +83,11 @@ Verified on Python 3.13, including `demucs` 4.1.0. An earlier note here claimed
 demucs forced a 3.11 environment; that turned out not to be true when actually
 tried, and is left recorded because the claim had been repeated.
 
+The packaged Windows build ships demucs inside it, so `--separate-audio` works
+out of the box; its model weights (~80 MB) download once on first use, like the
+acoustic model. On a pip install, separation is an extra:
+`pip install aksal[separate]` (or just `pip install demucs`).
+
 The acoustic model downloads on first run (~630 MB), is cached, and is shared
 across every song. Everything else a run produces is per-song and lives beside
 your output.
@@ -107,7 +112,8 @@ D:/karaoke/
     OP01.readings.tsv       <- reading overrides, editable
     OP01.aksal.json         <- what phase 1 found
     OP01.emissions.*.pt     <- cache
-    OP01.vocals.wav         <- isolated vocal stem
+    OP01.reference.m4a      <- only when --reference was a URL
+    OP01.vocals.wav         <- only with --separate-audio
     OP01.kara.jp.ass        <- phase 2 output
     OP01.kara.romaji.ass
 ```
@@ -192,12 +198,18 @@ aksal phase2 D:/karaoke/OP01.lines.ass
 
 `--lyrics` takes a **local file**, a **Uta-Net song URL**, or a **search term
 for LRCLIB** — whatever it resolves to is cached beside your output so you can
-correct it by hand:
+correct it by hand. `--reference` likewise takes a **local file or a URL** —
+anything yt-dlp understands — downloaded once and cached beside the output:
 
 ```bash
-aksal phase1 --video EP01.mkv --reference song.flac \
+aksal phase1 --video EP01.mkv \
+    --reference "https://www.youtube.com/watch?v=..." \
     --lyrics "https://www.uta-net.com/song/361192/" -o OP01.lines.ass
 ```
+
+A fetched reference gets no special trust: the fingerprint match that runs
+right after treats it exactly like a local file, so a wrong download fails
+with the same message a wrong file would.
 
 **An ED** is the same command with a later hint:
 
@@ -274,9 +286,9 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--video PATH` | required | Video containing the song. |
 | `--lyrics SOURCE` | required | A local file, a Uta-Net song URL, or a search term for LRCLIB. Cached beside your output for hand-correction. |
 | `-o`, `--out PATH` | `<video>.lines.ass` here | Where to write the lines file. **Everything else is written beside it, sharing that stem.** |
-| `--reference PATH` | — | The official track. Lets you use the **full** lyric sheet: cut lines drop out automatically. |
+| `--reference PATH\|URL` | — | The official track: a local file, or a URL for yt-dlp (cached beside the output). Lets you use the **full** lyric sheet: cut lines drop out automatically. |
 | `--song-start TIME` | — | Roughly where the song starts, e.g. `0:36` or `21:30`. A hint with `--reference`; required and exact-ish without one. |
-| `--duration SEC` | `92` | How long the song runs in the video. Without `--reference` it also bounds the lyrics. |
+| `--duration TIME` | `92` (announced when assumed) | How long the song runs in the video, e.g. `90` or `1:30`. Without `--reference` it also bounds the lyrics. |
 | `--insert-romaji` / `--no-insert-romaji` | **on** | Prefix each line with its romaji as `{*RO*…*RO*}`. Invisible when rendered, visible in Aegisub's edit box — you are about to correct these lines, so you need to tell them apart. |
 | `--refresh-lyrics` | off | Re-fetch even if a cached copy exists. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
@@ -294,13 +306,13 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 |---|---|---|
 | `LINES` | required | Your corrected lines file, or any hand-made subtitle. |
 | `--video PATH` | — | Required only for a hand-made subtitle with no phase-1 project behind it. |
-| `--reference PATH` | — | With `--video`: align against the clean track instead. |
+| `--reference PATH\|URL` | — | With `--video`: align against the clean track instead. File or URL, as phase1. |
 | `--time-against` | `video` | `video` or `reference`. The video measures what was actually broadcast. |
 | `--group` | `syllable` | `syllable` or `word`. Timing is identical; only the cell boundaries differ. |
 | `--tracks` | `jp,romaji` | Which karaoke tracks to write. |
 | `--snap` / `--no-snap` | on | Snap syllable starts to energy onsets. |
 | `--project PATH` | auto | Override the stem whose state file to use. |
-| `--model`, `--separate-audio`, `--device` | | As phase1. |
+| `--model`, `--device` | | As phase1. |
 
 ### find — anime name to a ready-to-run phase 1
 
@@ -322,13 +334,14 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 
 Ranked by impact:
 
-1. **Vocal isolation** (on by default). The acoustic model was trained on speech;
-   in a full mix the drums and bass occupy the same spectral space as the voice.
-2. **Per-line windowed alignment** in phase 2 — your corrections as hard bounds.
-3. **Onset snapping.** CTC spikes land inside a syllable, not on its attack; an
-   isolated vocal stem has a much sharper envelope than the posterior does.
-4. **Signal conditioning** — 80Hz high-pass, and one *global* RMS normalisation
+1. **Per-line windowed alignment** in phase 2 — your corrections as hard bounds.
+2. **Onset snapping.** CTC spikes land inside a syllable, not on its attack.
+3. **Signal conditioning** — 80Hz high-pass, and one *global* RMS normalisation
    rather than per-window, so the model sees no level jumps at window seams.
+4. **Vocal isolation** (`--separate-audio`, off by default). Measured over eight
+   songs it is a wash for timing — marginally better on average, worse in the
+   tail, ~4× the runtime. It earns its keep on a noisy mix: SFX or dialogue
+   over the song.
 
 ### Two things that silently ruin output
 
@@ -443,15 +456,33 @@ project because token order is part of the checkpoint contract.
 Stated plainly, because each one produces plausible-looking output rather than
 an error.
 
+- **Word splitting has no single right answer in Japanese.** The language is
+  written without spaces, and different timers, lyric sites and analysers all
+  split defensibly and differently. AKSAL agrees with human karaoke authors on
+  ~95% of sound boundaries; the rest is convention, not error. With romaji
+  lyrics **your own spacing is authoritative** and none of this applies.
+- **Romanisation styles differ.** Long vowels alone can be written `o`, `ou`,
+  `oo` or `ō`, and particles は/へ/を romanise differently by house style.
+  AKSAL writes one consistent style; if yours differs, supply romaji lyrics
+  and your spelling is kept verbatim.
+- **Some words are legitimately read several ways, and lyricists invent more**
+  ([gikun](https://www.japanesewithanime.com/2017/12/gikun.html)): no analyser
+  can know what the singer chose. Disputed and unreadable cases are flagged in
+  the readings TSV rather than guessed silently — fixing a flagged reading
+  there is expected workflow, not failure.
+- **Full-version lyrics against a shorter video need `--reference`.** The
+  aligner cannot discard lines on its own — only the fingerprint match against
+  a reference can decide which lines are in the cut. That works when the video
+  uses pieces of the song in order; an edit that reorders them (first verse,
+  then the ending) can defeat the mapping, and then trimming the lyrics by
+  hand is the fix. Without a reference, lyrics that cannot fit the window are
+  refused, and lyrics denser than any measured real cut get a loud warning.
 - **A repeated chorus can be mapped to the wrong occurrence.** Both instances
   fingerprint identically. Detected and resolved in favour of the earlier one,
   which keeps the map consistent but can cost the lines in the disputed span.
 - **A lyric sheet that omits something sung loses those lines.** If the
   broadcast sings a hook the published lyrics do not print, no reference can
   find it.
-- **About five words in seven hundred segment differently** from a human timer's
-  convention. The remaining cases are lexical rather than grammatical — the
-  readings TSV is the fix, not another rule.
 - **Sustained vowels and melisma** are where syllable timing still smears.
 - **Japanese only**, by construction: the model's vocabulary is kana.
 - **The published numbers are without separation.** `--separate-audio` measured

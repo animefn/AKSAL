@@ -117,10 +117,14 @@ aksal phase1 \
 aksal phase2 D:/karaoke/OP01.lines.ass
 ```
 
-`--lyrics` also takes a Uta-Net song URL or an LRCLIB search term directly:
+`--lyrics` also takes a Uta-Net song URL or an LRCLIB search term directly,
+and `--reference` takes a URL for yt-dlp (YouTube etc) as well as a file --
+downloaded once, cached beside the output, and then fingerprint-verified
+exactly like a local file:
 
 ```bash
-aksal phase1 --video EP01.mkv --reference song.flac \
+aksal phase1 --video EP01.mkv \
+    --reference "https://www.youtube.com/watch?v=..." \
     --lyrics "https://www.uta-net.com/song/361192/" -o OP01.lines.ass
 ```
 

@@ -39,9 +39,15 @@ EXCLUDE = [
     "torchvision",
     "matplotlib", "pandas", "IPython", "notebook", "jupyter",
     "pytest", "_pytest", "tkinter",
-    # Optional at runtime: separation is opt-in and yt-dlp is only used by
-    # `find`, so both are better installed alongside than frozen in.
-    "demucs", "julius", "openunmix", "yt_dlp",
+    # yt-dlp is invoked as an executable found on PATH, never imported, so
+    # freezing it in would only pin a tool that must stay updatable.
+    #
+    # demucs is NOT excluded. It used to be, on the grounds that separation is
+    # opt-in -- which turned every packaged `--separate-audio` run into a
+    # confusing failure: the frozen build had no demucs to import and no
+    # python to spawn. It is small next to torch (einops + julius + lameenc),
+    # so the build carries it and the flag works everywhere.
+    "yt_dlp",
     # Measured at 246 MB in a first build, all of it reached only through
     # transformers' optional imports. Audio is decoded by shelling out to
     # ffmpeg, so PyAV is never touched, and nothing here does vision, ONNX or
@@ -55,6 +61,7 @@ HIDDEN = [
     # analyser cannot see them.
     "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
     "aksal.discover", "aksal.tools",
+    "demucs.api",
     "scipy.special.cython_special",
 ]
 
@@ -88,6 +95,11 @@ def main() -> int:
         # default, so the whole application dies on a missing "Lorem ipsum.txt"
         # before it has done anything.
         "--collect-data", "jaraco.text",
+        # demucs ships its model registry as package data (remote/*.yaml plus
+        # files.txt); without them Separator() dies resolving "htdemucs" even
+        # though every module imported fine. The weights themselves are NOT
+        # bundled -- they download on first use like the acoustic model.
+        "--collect-data", "demucs",
         str(ROOT / "packaging" / "entry.py"),
     ]
     for mod in EXCLUDE:

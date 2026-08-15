@@ -34,6 +34,17 @@ SEARCH_MARGIN = 120.0
 # bottom out around 0.10 s; nothing real goes below it for a whole song.
 MIN_SEC_PER_MORA = 0.10
 
+# Applied when --duration is not given. A TV size runs ~89-92s; stated as a
+# constant so the CLI can tell the user it is guessing rather than measuring.
+DEFAULT_DURATION = 92.0
+
+# Above this share of the window (at the fastest pace) the sheet holds more
+# text than any real cut. Measured over 109 hand-timed karaoke files: genuine
+# cuts need at most 0.49 of their own window (median 0.24, p90 0.30), while a
+# full 4-minute sheet against a TV size needs 2-3x the window. So between 0.55
+# and 1.0 the run continues with a loud warning, and above 1.0 it stops.
+WARN_FIT = 0.55
+
 
 def check_fits_window(n_units: int, window: float, log=print) -> None:
     """Refuse a lyric sheet that cannot physically fit the window.
@@ -54,7 +65,21 @@ def check_fits_window(n_units: int, window: float, log=print) -> None:
     if window <= 0 or n_units <= 0:
         return
     need = n_units * MIN_SEC_PER_MORA
+    if need <= WARN_FIT * window:
+        return
     if need <= window:
+        # More text than any real cut carries, but not physically impossible.
+        # A warning rather than a stop: dense rap sections exist, and the user
+        # may know something the statistics do not.
+        log(f"\n  WARNING: these lyrics are unusually long for this window --\n"
+            f"  {n_units} moras need {need:.0f}s of the {window:.0f}s window at "
+            f"the fastest anyone sings.\n"
+            f"  No genuine cut in 109 measured songs is this dense. If this is "
+            f"a FULL lyric\n"
+            f"  sheet, the output will be confidently wrong: trim the sheet to "
+            f"what the cut\n"
+            f"  sings, or pass --reference and let the cut lines drop out "
+            f"automatically.")
         return
     raise SystemExit(
         f"these lyrics cannot fit this window.\n\n"
@@ -90,6 +115,38 @@ def parse_time(v: str) -> float:
     raise argparse.ArgumentTypeError(f"bad timestamp: {v!r}")
 
 
+def resolve_media(spec: str | None, dest: Path, log=print) -> Path | None:
+    """Turn a --reference value into a local file: a path, or a URL for yt-dlp.
+
+    The same shape --lyrics already has, because the same person supplies both
+    and reference tracks live in the same places lyrics do. Anything yt-dlp
+    understands works; the download is cached beside the project, so a re-run
+    -- and phase 2 -- reads the file rather than the network.
+
+    The fetched audio is verified the same way a local file is: by the
+    fingerprint match that runs right after. A download that is not this
+    show's recording fails there with the same message a wrong local file
+    would, so no separate trust decision is introduced here.
+    """
+    if spec is None:
+        return None
+    if spec.lower().startswith(("http://", "https://")):
+        if dest.exists():
+            log(f"  using cached reference: {dest.name}")
+            return dest
+        from . import fetch
+
+        log(f"  fetching reference audio: {spec}")
+        try:
+            return fetch.download_audio(spec, dest)
+        except fetch.FetchError as exc:
+            raise SystemExit(str(exc))
+    path = Path(spec)
+    if not path.exists():
+        raise SystemExit(f"reference not found: {spec}")
+    return path
+
+
 # =============================================================================
 # phase 1
 # =============================================================================
@@ -102,21 +159,25 @@ def cmd_phase1(args) -> None:
     base = project_mod.stem_of(out_lines)
     base.parent.mkdir(parents=True, exist_ok=True)
 
-    mode = "reference" if args.reference else "video"
+    reference = resolve_media(
+        args.reference, base.parent / (base.name + ".reference.m4a"), log=log)
+    duration = args.duration if args.duration is not None else DEFAULT_DURATION
+
+    mode = "reference" if reference else "video"
     window: tuple[float, float] | None = None   # slice of source to decode
     log(f"output  : {base}.*")
     log(f"mode    : {mode}")
 
     # --- 1. decide what audio we align against, and how it maps to the video --
     if mode == "reference":
-        source = args.reference
+        source = reference
         # The fingerprint search window is DERIVED from the same two numbers
         # that describe the song, rather than being described again separately.
         # A hint only bounds the search; the match itself decides the timing, so
         # the margin is generous and being a minute out costs nothing.
         if args.song_start is not None:
             s_start = max(args.song_start - SEARCH_MARGIN, 0.0)
-            s_dur = args.duration + 2 * SEARCH_MARGIN
+            s_dur = duration + 2 * SEARCH_MARGIN
         else:
             s_start, s_dur = 0.0, None          # None: the whole video
             log("  no --song-start: searching the whole video (slower)")
@@ -152,7 +213,17 @@ def cmd_phase1(args) -> None:
                 "  Pass --song-start (e.g. --song-start 0:36); ten seconds in\n"
                 "  mpv beats a scan that may be confidently wrong. For an ED,\n"
                 "  the same flag works -- it is just a later timestamp.")
-        end = start + args.duration
+        # Without a reference the two numbers on this command line are the ONLY
+        # statement of where the song is and what it sings. Say what is being
+        # assumed rather than letting a default pass silently.
+        if args.duration is None:
+            log(f"  no --duration: assuming the song runs {duration:.0f}s -- "
+                "set it if this cut is longer or shorter")
+        log("  video-only mode: the lyrics must contain ONLY the lines this "
+            "cut sings.\n  A full-version sheet cannot work here -- every line "
+            "is forced into the\n  window and the result is confidently wrong. "
+            "For full lyrics, pass --reference.")
+        end = start + duration
         # Decode ONLY this window. Forced alignment has no skip state, so it
         # forces every lyric into whatever audio it is handed -- give it the
         # whole episode and the lyrics get smeared across all 24 minutes.
@@ -187,33 +258,37 @@ def cmd_phase1(args) -> None:
 
     proj = Project(base=base, video=video,
                    mode=mode, align_audio=align_source,
-                   reference=args.reference, segments=segments,
+                   reference=reference, segments=segments,
                    model=args.model, conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
     # --- 3. readings ---------------------------------------------------------
     log("\nreadings")
-    source = args.lyrics_format
-    if source == "auto":
-        source = readings.detect_source(lyrics_file)
-        log(f"  detected lyric script: {source}")
-    proj.lyrics_source = source
+    # `script` and never `source`: this function already has a `source` meaning
+    # "the audio we align against", and reusing the name for the lyric SCRIPT
+    # caused a real bug once -- a later branch probed the string "romaji" for
+    # an audio duration, got None, and silently threw away every LRCLIB hint.
+    script = args.lyrics_format
+    if script == "auto":
+        script = readings.detect_source(lyrics_file)
+        log(f"  detected lyric script: {script}")
+    proj.lyrics_source = script
     proj.save()
 
-    if source == "romaji":
+    if script == "romaji":
         log("  romaji source: parsing straight to kana, no analyser involved")
     overrides = readings.load_overrides(proj.readings_tsv)
     if overrides:
         log(f"  {len(overrides)} manual override(s) carried over")
-    rows = readings.from_lyrics(lyrics_file, overrides, source)
+    rows = readings.from_lyrics(lyrics_file, overrides, script)
     log(f"  {len(rows)} lyric lines")
 
     # Without a reference, the lyrics file is the ONLY statement of what this
     # cut sings, so it has to be the text of the cut. Check that it can be.
     if mode == "video":
         n_units = sum(len(moras.split(r.replace(" ", ""))) for _n, _s, r in rows)
-        check_fits_window(n_units, args.duration, log=log)
+        check_fits_window(n_units, duration, log=log)
 
     # --- 4. align ------------------------------------------------------------
     log("\nalignment")
@@ -261,11 +336,11 @@ def cmd_phase1(args) -> None:
             # differs simply goes unanchored.
             query = args.lrc_query or " ".join(
                 x for x in (resolved.title, resolved.artist) if x)
-            # args.reference, NOT `source`: by this point `source` has been
-            # reassigned to the lyrics SCRIPT ("jp"/"romaji"), and probing that
-            # for a duration silently yields None, which reads as "unverifiable"
-            # and throws away every hint.
-            ref_dur = audio_mod.duration(args.reference)
+            # The RESOLVED reference file. Probing anything that is not the
+            # audio silently yields None, which reads as "unverifiable" and
+            # throws away every hint -- that bug happened, which is why the
+            # lyric script now lives in `script` and audio in `reference`.
+            ref_dur = audio_mod.duration(reference)
             hit = lyrics_mod.fetch_lrclib_verified(
                 query, ref_dur, resolved.artist, log=log)
             timings = hit.timings if hit else []
@@ -296,7 +371,7 @@ def cmd_phase1(args) -> None:
     if args.insert_romaji:
         for line_no, surface, _reading in rows:
             units, owner, cells = readings.units_and_romaji(
-                surface, overrides, source)
+                surface, overrides, script)
             romaji_of[line_no] = "".join(cells)
         log(f"  romaji hints on {len(romaji_of)} line(s)")
 
@@ -346,7 +421,7 @@ def cmd_phase1(args) -> None:
     table = []
     for line_no, surface, reading in rows:
         grp = next((g for g in groups if g[0]["line"] == line_no), None)
-        flag = readings.flags_for(surface, reading, source)
+        flag = readings.flags_for(surface, reading, script)
         if grp:
             weak = sum(1 for c in grp if c["conf"] < 0.02)
             if len(grp) and weak / len(grp) > 0.7:
@@ -355,7 +430,7 @@ def cmd_phase1(args) -> None:
             # Flagged, never changed: measured over six songs the audio picked
             # the rival five times and was right four of them, so switching
             # automatically would corrupt one correct reading to fix four.
-            if source != "romaji":
+            if script != "romaji":
                 pairs = readings.analyse_words(readings.normalise_surface(surface))
                 owner = [w for w, (_s, k) in enumerate(pairs) for _ in k]
                 for surf, ours_r, theirs, decided in aligner.disputed_readings(
@@ -430,21 +505,26 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
     base = project_mod.stem_of(lines_file)
     base.parent.mkdir(parents=True, exist_ok=True)
 
+    # Same contract as phase 1: a local file or a URL for yt-dlp, cached
+    # beside the project under the same name so the two phases share it.
+    reference = resolve_media(
+        args.reference, base.parent / (base.name + ".reference.m4a"), log=log)
+
     pad = 2.0
     start = max(min(e.start for e in events) - pad, 0.0)
     end = max(e.end for e in events) + pad
     dur = end - start
 
-    if args.reference:
+    if reference:
         # The subtitle is timed to the video, so we still need the offset
         # between the video and the clean track.
         log("\nlocating song in video (fingerprint)")
         segments = locate.locate_by_fingerprint(
-            args.reference, args.video, max(start - 30.0, 0.0), dur + 60.0,
+            reference, args.video, max(start - 30.0, 0.0), dur + 60.0,
             log=log)
         if not segments:
             raise SystemExit("reference track does not match this video.")
-        source, a_start, a_dur = args.reference, None, None
+        source, a_start, a_dur = reference, None, None
         for s in segments:
             log(f"    video {s.ep_start:8.2f}-{s.ep_end:8.2f}  <- "
                 f"song {s.ref_start:7.2f}-{s.ref_end:7.2f}")
@@ -470,8 +550,8 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
             device=args.device, log=log)
 
     proj = Project(base=base, video=args.video,
-                   mode="reference" if args.reference else "video",
-                   align_audio=align_source, reference=args.reference,
+                   mode="reference" if reference else "video",
+                   align_audio=align_source, reference=reference,
                    segments=segments, model=args.model,
                    conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = a_start, a_dur
@@ -483,6 +563,14 @@ def cmd_phase2(args) -> None:
     lines_file: Path = args.lines
     if not lines_file.exists():
         raise SystemExit(f"lines file not found: {lines_file}")
+
+    # Validated BEFORE any work. This used to be checked after alignment, so a
+    # typo in --tracks cost the whole model-loading and alignment run before
+    # the run died having written nothing.
+    wanted = {t.strip() for t in args.tracks.split(",") if t.strip()}
+    if not wanted or wanted - {"jp", "romaji"}:
+        raise SystemExit("--tracks accepts jp and/or romaji, e.g. --tracks jp "
+                         "or --tracks jp,romaji")
 
     events = ass.read(lines_file)
     if not events:
@@ -616,9 +704,6 @@ def cmd_phase2(args) -> None:
     if snapped:
         log(f"  snapped {snapped} mora start(s) to onsets")
     log("")
-    wanted = {t.strip() for t in args.tracks.split(",") if t.strip()}
-    if wanted - {"jp", "romaji"}:
-        raise SystemExit("--tracks accepts jp and/or romaji")
     if "jp" in wanted:
         out_jp = base.parent / (
             base.name + (".kara.kana.ass" if kana_only else ".kara.jp.ass"))
@@ -669,17 +754,22 @@ def build_parser() -> argparse.ArgumentParser:
                          r"with \{\*RO\*.*?\*RO\*\} or pass --no-insert-romaji.")
     p1.add_argument("--refresh-lyrics", action="store_true",
                     help="re-fetch even if the project already has a cached copy")
-    p1.add_argument("--reference", type=Path,
-                    help="full-length official track. With it, the song is "
-                         "located automatically and alignment runs on clean "
-                         "studio audio -- strongly preferred.")
+    p1.add_argument("--reference",
+                    help="full-length official track: a local file, or a URL "
+                         "for yt-dlp (YouTube etc), downloaded once and cached "
+                         "beside the output. With it, the song is located "
+                         "automatically and alignment runs on clean studio "
+                         "audio -- strongly preferred.")
     p1.add_argument("--song-start", type=parse_time,
                     help="roughly where the song starts in the video, e.g. "
                          "0:36 or 21:30 for an ED. With --reference it just "
                          "narrows the search and may be a minute out; without "
                          "one it defines the window and is required.")
-    p1.add_argument("--duration", type=float, default=92.0,
-                    help="song length in video-only mode (default: 92s)")
+    p1.add_argument("--duration", type=parse_time, default=None,
+                    help="how long the song runs in the video, e.g. 90 or "
+                         f"1:30 (default: {DEFAULT_DURATION:.0f}s, announced "
+                         "when assumed). Without --reference it also bounds "
+                         "the lyrics.")
     p1.add_argument("--lyrics-format", choices=("auto", "jp", "romaji"),
                     default="auto",
                     help="script of the lyrics file (default: auto-detect). "
@@ -731,9 +821,10 @@ def build_parser() -> argparse.ArgumentParser:
     p2.add_argument("--video", type=Path,
                     help="required only for a hand-made subtitle with no "
                          "phase1 project behind it")
-    p2.add_argument("--reference", type=Path,
+    p2.add_argument("--reference",
                     help="with --video: align against this clean track instead "
-                         "of the video's own audio (better, needs the song)")
+                         "of the video's own audio (better, needs the song). "
+                         "A local file or a URL for yt-dlp, as in phase1.")
     p2.add_argument("--project", type=Path,
                     help="override the stem whose state file to use; normally "
                          "found from the lines file automatically")
@@ -762,7 +853,8 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--song-start", type=parse_time,
                     help="roughly where the song starts; narrows the "
                          "fingerprint search and is passed through to phase 1")
-    pf.add_argument("--duration", type=float, default=92.0)
+    pf.add_argument("--duration", type=parse_time, default=None,
+                    help=f"as phase1 (default: {DEFAULT_DURATION:.0f}s)")
     pf.add_argument("--pick", type=int,
                     help="choose candidate N without asking (for scripts)")
     pf.add_argument("--yes", action="store_true",
@@ -804,8 +896,9 @@ def cmd_find(args) -> None:
     if video is None:
         log("  lookup only: no --video, so no reference track can be verified")
 
+    duration = args.duration if args.duration is not None else DEFAULT_DURATION
     found = discover.run(args.anime, video, out, kind=args.kind,
-                         song_start=args.song_start, duration=args.duration,
+                         song_start=args.song_start, duration=duration,
                          auto=args.yes, pick=args.pick, log=log)
 
     if found.theme is None:
