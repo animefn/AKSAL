@@ -1,9 +1,12 @@
 # AKSAL
 
-**AFN Karaoke Syllable Aligner for Lyrics**
+**AnimeFN Karaoke Syllable Aligner for Lyrics**
 
-Turns a song and its lyrics into syllable-timed karaoke. Works on openings,
-endings and insert songs alike.
+This is a tool that helps you create karaoke for Japanese songs in a much lazier way. Please note: lazier, not automated, which means it still requires human involvement for adjustments.
+
+The tool supersedes our previous [ksplitter](https://github.com/animefn/ksplitter). This time the tool can take Japanese or romaji lyrics, time them to your audio and perform timed syllable k-splitting (the previous tool only gave you hints as to where to split, without timing). The tool can also convert from Japanese characters to romaji while making the karaoke.
+
+
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.lines.ass
@@ -19,15 +22,14 @@ aksal phase2 OP01.lines.ass
 
 ## Motivation
 
-Karaoke timing is the most tedious job in fansubbing. Existing tools help you
-*do* it faster; none of them work out *when* the syllables land.
+Karaoke timing is one of the most tedious jobs in fansubbing, and it never gave me any satisfaction. Existing tools help you *do* it faster; none of them work out *when* the syllables land.
 
 The input problem is also worse than it looks. You usually have the full-length
 lyrics, but the video contains a **TV edit** — a ~90 second cut of a ~4 minute
 song. So half the lyrics have no audio at all, and nothing tells you which half.
 
-**The idea AKSAL is built on:** align against the **full official track**, not
-the episode. Then map the result onto the episode timeline.
+**AKSAL is built on several ideas to allow for flexibility:** you can align against the **full official track**, not
+the episode, then map the result onto the episode timeline.
 
 That inversion is what makes it tractable:
 
@@ -44,33 +46,52 @@ every retained chunk sits at a constant offset from the reference. Matching
 fingerprint hashes form diagonals in (reference time, video time) space, and
 clustering them by offset recovers the entire edit structure in one cheap pass.
 
+
+
+### How to create karaoke effects in general:
+- Step 0 (preparation): Look up kara.moe — if they already have a k-split karaoke for your song then you're done! Download it, jump to step 3 and call it a day. If not, then you need to find the lyrics for your song and create the karaoke yourself from them. There are several ways to find the lyrics: you can read the credits on screen and type the romaji yourself, or look up the web for the lyrics already written out (in Japanese) and then use some assistant tooling to generate romaji out of them, or look up the web for the romaji lyrics directly if they exist (the common and simplest way for fairly well known anime).
+- Step 1: Once you have the lyrics, you time each line for your video.
+- Step 2:
+  - 2.1: once you have the lyrics line-timed, split them per Japanese character (aka per Japanese vocal syllable)
+  - 2.2: you time each syllable to when it's being sung
+- Step 3 (optional): create karaoke effects
+
+Currently this tool helps partially with step 0, and assists you in doing step 1 (aka phase 1) and step 2 (aka phase 2).
+
+Step 3 is currently outside the scope of this tool.
+
+
+
 ### Why two phases
 
+Our tool does the generation in 2 phases (step 1 and step 2 above)
+
 ```
-phase1   video + lyrics + song  ->  timed LINES
-         ... you fix the lines in Aegisub ...
-phase2   corrected lines        ->  JP karaoke + Romaji karaoke
+phase1   the tool takes video + lyrics + song  -> generates timed kara LINES
+      ... then you manually fix the lines in Aegisub in case of mistakes ...
+phase2   the tool takes corrected lines (phase 1 after your correction)        ->  and output K-Split JP karaoke + Romaji karaoke
 ```
 
-Phase 2 re-aligns **inside each line window you approved**. Your corrections
-become hard constraints, so an error in one line cannot leak into its
-neighbours — the failure mode of any single-pass aligner. Fixing lines is also
-far cheaper than fixing syllables, so the manual effort lands where it buys most.
+Phase 2 re-aligns **inside each line window you approved** via your manual correction. The tool is for the lazy, but don't be too lazy: check the output of phase 1 (and fix it if needed) before feeding it to phase 2!
 
 Both karaoke tracks are built from **one** syllable segmentation, so their `\k`
-splits match by construction rather than by coincidence. Phase 2 asserts this and
-warns if they ever diverge.
+splits match by construction rather than by coincidence. Phase 2 asserts this and warns if they ever diverge.
 
 ### Name origin
 
-**A**FN **K**araoke **S**yllable **A**ligner for **L**yrics.
+**A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics.
 
-أكسل (*aksal*) — "lazier".
+أكسل (*aksal*) — "lazier": a perfect name for a tool that provides a much lazier way to create karaoke for your favourite Japanese songs.
 
 ---
 
 ## Download
 
+For non-technical people, the easiest way is of course to download it from the releases page.
+
+We provide a Windows build ready to use. It will need to download some "models" the first time you launch it; these are necessary for AKSAL to work and may require up to 3 GB in total.
+
+For people who want to play with the code:
 Requires **Python 3.10+**, plus `ffmpeg` and `ffprobe` on `PATH`.
 
 ```bash
@@ -79,9 +100,7 @@ cd AKSAL
 pip install -e .
 ```
 
-Verified on Python 3.13, including `demucs` 4.1.0. An earlier note here claimed
-demucs forced a 3.11 environment; that turned out not to be true when actually
-tried, and is left recorded because the claim had been repeated.
+Verified on Python 3.13, including `demucs`.
 
 The packaged Windows build ships demucs inside it, so `--separate-audio` works
 out of the box; its model weights (~80 MB) download once on first use, like the
@@ -106,9 +125,9 @@ stem. There is no project directory, no hidden state, and nothing is written to
 the tool's own folder:
 
 ```
-D:/karaoke/
+D:/Mykaraoke/
     OP01.lines.ass          <- you edit this
-    OP01.lyrics.txt         <- fetched lyrics, editable
+    OP01.lyrics.txt         <- fetched lyrics (in case of web import), editable
     OP01.readings.tsv       <- reading overrides, editable
     OP01.aksal.json         <- what phase 1 found
     OP01.emissions.*.pt     <- cache
@@ -119,17 +138,14 @@ D:/karaoke/
 ```
 
 The caches live here too, deliberately. They are large, but they belong to one
-song and are worthless once you are done with it -- so `OP01.*` removes every
-trace of a run and there is nowhere else to go looking. (The acoustic model is
-different: it is shared across every song, so it stays in the normal Hugging
-Face cache.)
+song and are worthless once you are done with it, so you can delete them once you have finished your work on that specific song.
 
 Phase 2 needs no arguments beyond the lines file. It finds `OP01.aksal.json`
 next to it.
-## The one rule: your lyrics and your reference must describe the same thing
 
-Everything about phase 1 follows from this, and most confusion comes from
-breaking it.
+---
+
+## The one rule: your lyrics and your reference file (audio or video) must describe the same thing
 
 Phase 1 has to know **which lines are sung, and where**. There are exactly two
 ways it can find that out, and you pick whichever matches the lyrics you have:
@@ -323,7 +339,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `-o`, `--out PATH` | `<video>.lines.ass` | Where phase 1 should write. |
 | `--op` / `--ed` | both | Consider only openings, or only endings. |
 | `--song-start TIME` | — | Narrows the verification search; passed through to phase 1. |
-| `--duration SEC` | `92` | As phase1. |
+| `--duration TIME` | `92` | As phase1. |
 | `--pick N` | — | Choose candidate N without asking, for scripts. |
 | `--yes` | off | Accept the first plausible answer at every prompt. |
 | `--run` | off | Run phase 1 immediately without asking. |
