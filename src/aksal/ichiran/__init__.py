@@ -106,11 +106,16 @@ def _subdivide(seg, entry) -> list[tuple[str, str]] | None:
     # when the tail is an ending rather than a word.
     if entry.conj:
         return None
-    # AN EXPRESSION WRITTEN WITH KANJI IS A DELIBERATE JOIN. と共に is
-    # totomoni, and splitting it to と + 共に gives the same kana while losing
-    # the unit the writer chose. An all-kana pattern like ように is different:
-    # it is grammar, and human timers do split it.
-    if entry.pos == "exp" and any(_is_kanji(c) for c in entry.surface):
+    # ONLY ALL-KANA GRAMMATICAL PATTERNS. This started as "split whenever the
+    # reading survives", which fires on ordinary words too: どこか rejoins from
+    # どこ + か, so a correct parse どこか|ら|か was being shredded into
+    # どこ|か|ら|か. Preserving the kana is necessary but nowhere near
+    # sufficient -- almost any compound preserves it.
+    #
+    # So the rule is narrow on purpose. `exp` marks a grammatical pattern
+    # rather than a word, and requiring it to be kana-only keeps と共に
+    # (totomoni) whole while still letting ように become "you ni".
+    if entry.pos != "exp" or any(_is_kanji(c) for c in entry.surface):
         return None
     parts = seg.subdivide(entry.surface)
     if not parts:

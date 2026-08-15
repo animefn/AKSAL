@@ -106,14 +106,27 @@ def test_particles_are_given_their_sung_form():
 
 # --- a dictionary unit is not a karaoke cell -----------------------------------
 
-def test_a_join_that_costs_nothing_is_undone():
+def test_a_kana_grammatical_pattern_is_split():
     """ように is one JMdict entry, and a human timer writes "you ni".
 
-    It may be split because splitting COSTS NOTHING: よう + に joins back to
-    exactly ように, so the entry was contributing coarseness and no reading.
+    It may be split because splitting COSTS NOTHING -- よう + に joins back to
+    exactly ように -- and because it is an `exp`, a grammatical pattern rather
+    than a word.
     """
     assert words("ように") == [("よう", "よう"), ("に", "に")]
-    assert words("心の奥") == [("心", "こころ"), ("の", "の"), ("奥", "おく")]
+
+
+def test_an_ordinary_word_is_never_split_apart():
+    """PRESERVING THE KANA IS NOT ENOUGH, and this was a real regression.
+
+    どこか rejoins from どこ + か, so a rule that split whenever the reading
+    survived shredded the correct parse どこか|ら|か into どこ|か|ら|か.
+    Almost any compound preserves its kana, so the rule has to be narrow: only
+    kana-only `exp` entries. A noun phrase like 心の奥 therefore stays whole,
+    which costs a boundary and protects every ordinary word.
+    """
+    assert words("どこか") == [("どこか", "どこか")]
+    assert words("心の奥") == [("心の奥", "こころのおく")]
 
 
 def test_a_join_that_carries_the_reading_survives():

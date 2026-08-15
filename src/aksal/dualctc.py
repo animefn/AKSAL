@@ -83,8 +83,47 @@ def checkpoint_path(spec: str | None, log=print) -> Path:
 
     from huggingface_hub import hf_hub_download
 
+    # THE CACHE IS CHECKED WITHOUT THE NETWORK FIRST. hf_hub_download contacts
+    # the hub on every call to see whether a newer revision exists, even when
+    # the file is already on disk -- so copying a populated `models` folder to
+    # a machine that is offline still produced a wall of connection errors, and
+    # the "fetching" message appeared for a model that was never fetched.
+    #
+    # local_files_only resolves purely from the cache and raises if it is not
+    # there, which turns "is it cached?" into a question that costs nothing and
+    # cannot fail on a bad connection.
+    try:
+        return Path(hf_hub_download(REPO, CHECKPOINT, local_files_only=True))
+    except Exception:                                # noqa: BLE001
+        pass
+
     log("  fetching the acoustic model (once; about 630 MB)")
-    return Path(hf_hub_download(REPO, CHECKPOINT))
+    log("  (this is the only download; it is cached beside the executable)")
+    try:
+        return Path(hf_hub_download(REPO, CHECKPOINT))
+    except Exception as exc:                         # noqa: BLE001
+        raise SystemExit(
+            f"could not fetch the acoustic model: {type(exc).__name__}\n\n"
+            "  It is downloaded once and cached, so this needs a working\n"
+            "  connection the first time only. If this machine is offline,\n"
+            "  copy the `models` folder from a machine that has it -- it sits\n"
+            "  beside aksal.exe -- or point HF_HOME at a populated cache.")
+
+
+def _cached_first(cls, model_id: str):
+    """`cls.from_pretrained`, preferring the local cache over the network.
+
+    The checkpoint is not the only thing fetched: the base model's config and
+    its feature extractor are pulled from the hub too, and each one contacts it
+    on every run to check for a newer revision. Fixing only the checkpoint left
+    two more calls that fail on an offline machine with a populated cache --
+    which is exactly the situation of someone who copied the `models` folder
+    across.
+    """
+    try:
+        return cls.from_pretrained(model_id, local_files_only=True)
+    except Exception:                                # noqa: BLE001
+        return cls.from_pretrained(model_id)
 
 
 def _find_state_dict(blob) -> dict:
@@ -113,7 +152,7 @@ def load_into(aligner, spec: str | None = None, log=print) -> None:
     path = checkpoint_path(spec, log=log)
     log(f"  acoustic model: {path.name}")
 
-    cfg = Wav2Vec2Config.from_pretrained(BASE_MODEL)
+    cfg = _cached_first(Wav2Vec2Config, BASE_MODEL)
     encoder = Wav2Vec2Model(cfg)
     head = torch.nn.Linear(int(getattr(cfg, "hidden_size", 1024)), len(KANA) + 1)
 
@@ -137,7 +176,7 @@ def load_into(aligner, spec: str | None = None, log=print) -> None:
     head.eval()
     aligner.model = encoder
     aligner.kana_head = head
-    aligner.processor = Wav2Vec2FeatureExtractor.from_pretrained(BASE_MODEL)
+    aligner.processor = _cached_first(Wav2Vec2FeatureExtractor, BASE_MODEL)
     aligner.log = log
 
     # Index 0 is blank, kana follow. A kana sitting on the blank index would be

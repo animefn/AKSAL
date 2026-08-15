@@ -77,6 +77,33 @@ def classify(pos_values: set[str]) -> str | None:
     return None
 
 
+# AUXILIARIES ATTACH TO THE TE-FORM AND MAKE ONE WORD. 狂っていた is a single
+# thing a singer sings and a timer times; leaving them apart returned
+# 狂って | い | た, three tokens, with い read as a COUNTER because a lone い
+# is a dictionary entry of its own.
+#
+# ichiran handles this in dict-grammar.lisp by attaching suffixes during the
+# search. Generating the combined forms into the index instead reaches the same
+# result through the machinery that already exists here, at the cost of index
+# size. The colloquial contractions (てる, てた) are not optional: sung
+# Japanese uses them constantly.
+TE_AUXILIARIES = (
+    ("いる", "te-iru"), ("いた", "te-ita"), ("いて", "te-ite"),
+    ("います", "te-imasu"), ("いない", "te-inai"),
+    ("る", "teru"), ("た", "teta"),          # ている -> てる, ていた -> てた
+    ("しまう", "te-shimau"), ("しまった", "te-shimatta"),
+    ("いく", "te-iku"), ("くる", "te-kuru"),
+    ("ある", "te-aru"), ("おく", "te-oku"),
+    ("ほしい", "te-hoshii"), ("みる", "te-miru"),
+)
+
+
+def _with_auxiliaries(te_surface: str, te_reading: str):
+    """The te-form plus each auxiliary, as single words."""
+    return [(te_surface + add, te_reading + add, name)
+            for add, name in TE_AUXILIARIES]
+
+
 def _pair(surface: str, reading: str, drop: int, add: str):
     """Replace the last `drop` characters of both strings with `add`."""
     if drop and (len(surface) < drop or len(reading) < drop):
@@ -116,6 +143,9 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
+        te = _pair(surface, reading, 1, "て")
+        if te:
+            out.extend(_with_auxiliaries(*te))
 
     elif cls == GODAN:
         if tail not in GODAN_TE:
@@ -134,6 +164,9 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
+        got_te = _pair(surface, reading, 1, te)
+        if got_te:
+            out.extend(_with_auxiliaries(*got_te))
 
     elif cls == GODAN_IKU:
         # 行く は く-godan in every form EXCEPT the て and た ones, where it
@@ -157,6 +190,9 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
             got = _pair(surface, reading, 1, add)
             if got:
                 out.append((*got, name))
+        got_te = _pair(surface, reading, 1, "って")
+        if got_te:
+            out.extend(_with_auxiliaries(*got_te))
 
     elif cls == ADJ_I:
         if tail != "い":
@@ -182,6 +218,9 @@ def forms(surface: str, reading: str, cls: str) -> list[tuple[str, str, str]]:
             got = _pair(surface, reading, 0, add)
             if got:
                 out.append((*got, name))
+        got_te = _pair(surface, reading, 0, "して")
+        if got_te:
+            out.extend(_with_auxiliaries(*got_te))
 
     elif cls == KURU:
         # 来る is irregular in the READING while the kanji stays put, so the
