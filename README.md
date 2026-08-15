@@ -400,10 +400,16 @@ Anything the dictionary does not cover falls back to `unidic`, which always has
 an answer — every mora has to become a karaoke cell, so a missing reading is a
 broken line rather than a slightly worse one.
 
-**A known trade:** dictionary units are coarser than a karaoke timer's words —
-ように and そのまま come back whole. This affects `--group word` only; syllable
-grouping, the default, is unaffected. Use `--analyser unidic` if you prefer the
-finer boundaries.
+**On word boundaries.** A dictionary unit is not always a karaoke cell, so a
+joined unit is split again when splitting **costs nothing** — ように becomes
+`you ni`, because よう + に joins back to exactly the same kana, so the entry
+was contributing coarseness and no reading. Where the join carries the reading
+it survives: 夜が明けて stays whole because 夜 is よ only inside the phrase.
+Inflected forms (歌われる) and kanji expressions (と共に) are never split.
+
+That leaves boundaries slightly coarser than a human timer's — 11 run-on words
+against `unidic`'s 5 over the hand-timed set, down from 19 before the rule.
+It affects `--group word` only; syllable grouping, the default, is unaffected.
 
 ### Readings
 

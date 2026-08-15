@@ -104,15 +104,38 @@ def test_particles_are_given_their_sung_form():
 
 # --- known limits, pinned so they cannot drift silently ------------------------
 
-def test_boundaries_are_coarser_than_a_karaoke_timer_would_draw():
-    """A DICTIONARY UNIT IS NOT A KARAOKE CELL, and this is the open problem.
+# --- a dictionary unit is not a karaoke cell -----------------------------------
 
-    ように and そのまま are single entries, so the dictionary returns them
-    whole where a human timer splits them. Measured over the hand-timed corpus
-    this produced 19 run-on words against UniDic's 5 -- correct as lexicography
-    and too coarse for `--group word`.
+def test_a_join_that_costs_nothing_is_undone():
+    """ように is one JMdict entry, and a human timer writes "you ni".
 
-    Pinned rather than fixed because the fix is a decision about karaoke cells,
-    not about readings, and syllable grouping -- the default -- is unaffected.
+    It may be split because splitting COSTS NOTHING: よう + に joins back to
+    exactly ように, so the entry was contributing coarseness and no reading.
     """
-    assert words("ように") == [("ように", "ように")]
+    assert words("ように") == [("よう", "よう"), ("に", "に")]
+    assert words("心の奥") == [("心", "こころ"), ("の", "の"), ("奥", "おく")]
+
+
+def test_a_join_that_carries_the_reading_survives():
+    """夜 is よ only inside the phrase, so splitting would change the kana."""
+    assert words("夜が明けても")[0] == ("夜が明けて", "よがあけて")
+
+
+def test_an_inflected_form_is_never_split():
+    """歌われる decomposes into 歌 + われる with the kana intact, and われる is
+    not a word anyone times separately. Preserving the reading says nothing
+    about whether a boundary is real when the tail is an ending."""
+    assert words("歌われる") == [("歌われる", "うたわれる")]
+
+
+def test_a_kanji_expression_stays_whole():
+    """と共に is totomoni. と + 共に gives the same kana and loses the unit the
+    writer chose; an all-kana pattern like ように is grammar and does split."""
+    assert ("と共に", "とともに") in words("君と共に")
+
+
+def test_a_lone_kana_is_only_split_off_if_it_is_a_particle():
+    """そのまま decomposes into その + ま + ま, which keeps every kana and is
+    nonsense as words. JMdict tags ま as a particle, so the tag cannot be
+    trusted for this and an explicit list is used."""
+    assert words("そのまま") == [("そのまま", "そのまま")]

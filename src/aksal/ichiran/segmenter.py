@@ -157,6 +157,38 @@ class Segmenter:
 
         return sorted(best[n], key=lambda p: -p.score)[:limit]
 
+    def subdivide(self, text: str) -> list[Segment] | None:
+        """Re-segment `text` without the entry that spans all of it.
+
+        Used to ask whether a joined unit could be written as smaller words.
+        The whole-span match is excluded, or the answer would trivially be
+        itself.
+        """
+        n = len(text)
+        best: list[list[Parse]] = [[] for _ in range(n + 1)]
+        best[0] = [Parse([], 0.0)]
+        for i in range(n):
+            if not best[i]:
+                continue
+            for length, entries in self.index.lookup(text, i):
+                if i == 0 and length == n:
+                    continue                       # the unit itself
+                final = (i + length) == n
+                scored = [(scoring.calc_score(e, final=final), e)
+                          for e in entries]
+                for score, entry in scoring.cull_segments(
+                        scored)[:self.candidates_per_span]:
+                    self._extend(best, i, i + length,
+                                 Segment(i, i + length, entry, score), limit=5)
+            gap = Segment(i, i + 1,
+                          Entry(text[i], "", text[i], "gap", -1, 0, 0, 0),
+                          scoring.gap_penalty(i, i + 1))
+            self._extend(best, i, i + 1, gap, limit=5)
+        if not best[n]:
+            return None
+        top = max(best[n], key=lambda p: p.score)
+        return top.segments if len(top.segments) > 1 else None
+
     @staticmethod
     def _extend(best: list[list[Parse]], i: int, j: int,
                 seg: Segment, limit: int) -> None:
