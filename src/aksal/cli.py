@@ -358,10 +358,16 @@ def cmd_phase1(args) -> None:
             if source != "romaji":
                 pairs = readings.analyse_words(readings.normalise_surface(surface))
                 owner = [w for w, (_s, k) in enumerate(pairs) for _ in k]
-                for surf, ours_r, theirs in aligner.disputed_readings(
+                for surf, ours_r, theirs, decided in aligner.disputed_readings(
                         lp, grp, pairs, owner, readings.rival_reading):
+                    # Two different things, kept apart in the table. `reading?`
+                    # means the audio backed the other engine. `unclear?` means
+                    # the span was unreadable and NOTHING decided it -- worth a
+                    # glance precisely because the tool has no opinion. Both are
+                    # notes on a row; neither stops the run or asks anything.
+                    kind = "reading" if decided else "unclear"
                     flag = ",".join(filter(
-                        None, [flag, f"reading?{surf}:{ours_r}/{theirs}"]))
+                        None, [flag, f"{kind}?{surf}:{ours_r}/{theirs}"]))
         table.append((line_no, flag, surface, reading))
     readings.write_table(proj.readings_tsv, table)
 

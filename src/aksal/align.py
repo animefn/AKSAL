@@ -29,6 +29,12 @@ OVERLAP_SEC = 2.0
 MODEL_STRIDE = 320             # wav2vec2 downsamples 16 kHz by 320 -> 20 ms/frame
 SEC_PER_FRAME = MODEL_STRIDE / SR
 
+# Below this mean confidence a span carries no usable evidence, and comparing
+# two candidates over it returns whichever won by noise. Ordinary aligned
+# syllables run a median of 0.085 and a p10 of 0.0031, so this sits an order of
+# magnitude under anything legible. See `Aligner.disputed_readings`.
+MIN_EVIDENCE = 0.001
+
 VOWEL_OF = {
     **{c: "あ" for c in "あかさたなはまやらわがざだばぱゃ"},
     **{c: "い" for c in "いきしちにひみりぎじぢびぴ"},
@@ -243,22 +249,41 @@ class Aligner:
 
     def disputed_readings(self, lp: torch.Tensor, cells: list[dict],
                           words: list[tuple[str, str]], owner: list[int],
-                          rival_of) -> list[tuple[str, str, str]]:
-        """Words where an independent engine disagrees and the AUDIO agrees with it.
+                          rival_of) -> list[tuple[str, str, str, bool]]:
+        """Words where an independent engine disagrees about the reading.
 
-        Returns (surface, ours, theirs) for each. Nothing is changed -- the row
-        is flagged and the user decides. That asymmetry is deliberate and is
-        what the measurement supports: over six songs the audio preferred the
-        rival five times and was right four of those, so auto-switching would
-        have corrupted one correct reading to fix four wrong ones. A flag costs
-        a glance at a table the user already opens.
+        Returns (surface, ours, theirs, decided). `decided` is True when the
+        audio preferred the rival, and False when the span carries too little
+        evidence for either candidate to mean anything. Nothing is ever
+        rewritten and nothing is ever asked: both kinds are flagged in the
+        table the user already opens, and the run continues.
+
+        The asymmetry -- flag, never switch -- is what the measurement
+        supports: over six songs the audio preferred the rival five times and
+        was right four of those, so auto-switching would have corrupted one
+        correct reading to fix four wrong ones.
+
+        WHY THE UNDECIDED CASE EXISTS. Comparing two confidences with no floor
+        means a span the model cannot read at all still produces a verdict, and
+        it is whichever candidate won by noise. Measured on the line that
+        raised this question, 方 scored 0.0009 for our reading against 0.0003
+        for the rival -- against a median of 0.085 for an ordinary aligned
+        syllable -- and the wrong reading "won", so nothing was flagged and the
+        error passed silently. Below MIN_EVIDENCE the comparison is not
+        trusted in EITHER direction and the word is surfaced as unresolved.
+
+        The floor is 0.001 because that is where the evidence stops, not where
+        it looked tidy: ordinary syllables run p10 = 0.0031, and across seven
+        songs exactly one dispute fell below 0.001 -- the one this is for. A
+        floor high enough to suppress weak FLAGS was rejected: at 0.005 it
+        would have deleted 風 -> かぜ and 数 -> かず, both real catches.
 
         Each candidate is scored over the word's OWN span, which is the only
         form of this comparison that works. Scoring against the whole track
         instead lets a candidate find a better-matching place elsewhere in the
         song, which measured as the true reading losing 34 times out of 34.
         """
-        out: list[tuple[str, str, str]] = []
+        out: list[tuple[str, str, str, bool]] = []
         for w, (surface, ours) in enumerate(words):
             theirs = rival_of(surface, ours)
             if not theirs:
@@ -279,8 +304,12 @@ class Aligner:
             crop = lp[f0:f1]
             a = self._mean_conf(crop, ours)
             b = self._mean_conf(crop, theirs)
-            if a is not None and b is not None and b > a:
-                out.append((surface, ours, theirs))
+            if a is None or b is None:
+                continue
+            if max(a, b) < MIN_EVIDENCE:
+                out.append((surface, ours, theirs, False))
+            elif b > a:
+                out.append((surface, ours, theirs, True))
         return out
 
     def _mean_conf(self, crop: torch.Tensor, kana: str) -> float | None:

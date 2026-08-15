@@ -136,6 +136,32 @@ def normalise_surface(line: str) -> str:
     return strip_ruby(line.replace("　", " ")).strip()
 
 
+# Single words the analyser simply reads wrong. Applied last, so it overrides
+# the analyser, the compound repair and the phrase lexicon alike.
+#
+# THE BAR FOR ENTRY IS HIGH, because this is a blunt instrument: a word here is
+# read the same way in every song, so a context-dependent reading MUST NOT be
+# listed. Both of these were mined from 109 verified songs and then checked in
+# isolation and in phrases -- each is wrong in EVERY context, not merely the
+# usual one:
+#
+#   僕等   the analyser gives ぼくとう, which is not a reading this word has.
+#   屍     it gives かばね, an archaic reading; singers used しかばね 3 times
+#          out of 3, and no occurrence of かばね was found.
+#
+# Deliberately NOT here, and worth recording so they are not added later:
+#
+#   間     ambiguous for real. あいだ and ま are both ordinary and mean
+#          different things; the analyser already gets ま right on its own.
+#   明日   あす and あした are both correct. Singers prefer あした (7 songs),
+#          but they differ in mora count, so forcing one changes the TIMING of
+#          every line containing it. A 55% majority does not justify that.
+WORD_READINGS: dict[str, str] = {
+    "僕等": "ぼくら",
+    "屍": "しかばね",
+}
+
+
 def analyse_words(text: str) -> list[tuple[str, str]]:
     """Tokenise a line into (surface, kana) pairs, one per word.
 
@@ -192,7 +218,8 @@ def analyse_words(text: str) -> list[tuple[str, str]]:
         repaired = repair_compounds(out[chunk_start:])
         out[chunk_start:] = join_phrases(repaired)
 
-    return [(surface, kana) for surface, kana, _pos in out]
+    return [(surface, WORD_READINGS.get(surface, kana))
+            for surface, kana, _pos in out]
 
 
 _IPADIC = None
