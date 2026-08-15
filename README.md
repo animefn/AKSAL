@@ -390,11 +390,15 @@ know that 夜 is read **よ** inside 夜が明ける — it segments into short 
 reading:
 
 ```
-夜が明けても    ichiran  yo ga akete mo       unidic  yoru ga akete mo
-一度            ichiran  ichido               unidic  ichi do
-と共に          ichiran  totomoni             unidic  to tomoni
-1人             ichiran  hitori               unidic  (digit unread)
+                ichiran                unidic
+夜が明けても    yogaakete mo           yoru ga akete mo
+一度            ichido                 ichi do
+と共に          totomoni               to tomoni
+1人             hitori                 1nin
 ```
+
+The last one is the sharpest: `unidic` leaves the digit unread, so the aligner
+receives a character it cannot pronounce and the mora is lost without a warning.
 
 Anything the dictionary does not cover falls back to `unidic`, which always has
 an answer — every mora has to become a karaoke cell, so a missing reading is a
