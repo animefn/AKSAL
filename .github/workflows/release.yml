@@ -85,8 +85,8 @@ jobs:
 
           ``ffmpeg`` is required and ``yt-dlp`` is optional; if either is
           missing the tool offers to fetch it. Vocal separation
-          (``--separate-audio``) needs demucs and is only available when running
-          from source.
+          (``--separate-audio``) is included in this build: demucs is bundled,
+          and its model downloads on first use like the acoustic one.
 
           See USAGE.md for the four workflows.
           "@
