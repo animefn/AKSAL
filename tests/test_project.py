@@ -1,144 +1,82 @@
-"""Flat, visible file layout.
-
-Every artifact of a run is a sibling of the output, sharing its stem. There is
-no project directory and nothing is written to the tool's own folder, so
-`OP01.*` removes every trace of a run.
-"""
-from __future__ import annotations
+"""Directory-native project layout and durable state."""
 
 from pathlib import Path
 
 import pytest
 
 from aksal.locate import Segment
-from aksal.project import STATE_SUFFIX, Project, stem_of
+from aksal.project import Project, STATE_NAME, default_output_dir
 
 
-# --- stem derivation ----------------------------------------------------------
-
-@pytest.mark.parametrize("name,expected", [
-    ("OP01.lines.ass", "OP01"),
-    ("OP01.lines.fixed.ass", "OP01"),          # suffixes stack while editing
-    ("OP01.lines.corrected.ass", "OP01"),
-    ("OP01.kara.jp.ass", "OP01"),
-    ("OP01.ass", "OP01"),
-    ("OP01", "OP01"),
-    ("Show - 01.lines.ass", "Show - 01"),      # spaces and dashes survive
-])
-def test_stem_of(name, expected):
-    assert stem_of(Path("D:/k") / name).name == expected
+def make(root=Path("D:/karaoke/OP01.aksal"), **values):
+    return Project(root=Path(root), video=Path("v.mkv"), mode="reference",
+                   align_audio=Path("a.wav"), **values)
 
 
-def test_stem_of_keeps_a_meaningful_dot():
-    """Only known editing suffixes are stripped, not any dotted part."""
-    assert stem_of(Path("D:/k/S01.E01.lines.ass")).name == "S01.E01"
+def test_default_directory_is_beside_the_input():
+    assert default_output_dir(Path("D:/shows/S01.E01.mkv")) == Path(
+        "D:/shows/S01.E01.aksal")
 
 
-def test_stem_of_preserves_the_directory():
-    assert stem_of(Path("D:/karaoke/OP01.lines.ass")).parent == Path("D:/karaoke")
+def test_artifacts_have_clear_subdirectories():
+    project = make()
+    assert project.state == project.root / "project.json"
+    assert project.lines_file == project.root / "lines.ass"
+    assert project.readings == project.root / "readings.tsv"
+    assert project.vocals == project.root / "audio" / "vocals.wav"
+    assert project.emissions_cache_for("abc") == (
+        project.root / "cache" / "emissions" / "abc.pt")
+    assert project.output_dir == project.root / "output"
 
 
-# --- sibling paths ------------------------------------------------------------
+def test_save_creates_the_complete_layout(tmp_path):
+    project = make(tmp_path / "song.aksal")
+    project.save()
+    assert project.state.exists()
+    assert project.audio_dir.is_dir()
+    assert project.emissions_dir.is_dir()
+    assert project.output_dir.is_dir()
 
-def make(base="D:/karaoke/OP01", **kw):
-    return Project(base=Path(base), video=Path("v.mkv"), mode="reference",
-                   align_audio=Path("a.wav"), **kw)
-
-
-def test_every_artifact_is_a_sibling_sharing_the_stem():
-    p = make()
-    for path in (p.state_file, p.lyrics, p.readings_tsv, p.lines_file,
-                 p.vocals, p.emissions_cache):
-        assert path.parent == Path("D:/karaoke")
-        assert path.name.startswith("OP01.")
-
-
-def test_one_glob_matches_everything_a_run_produces():
-    p = make()
-    produced = [p.state_file, p.lyrics, p.readings_tsv, p.lines_file,
-                p.vocals, p.window_wav, p.emissions_cache]
-    assert all(x.match("OP01.*") for x in produced)
-
-
-def test_nothing_is_written_to_the_tools_own_folder(tmp_path):
-    """The complaint that started this: state used to land wherever the tool
-    happened to be run from."""
-    p = make(base=str(tmp_path / "sub" / "OP01"))
-    p.save()
-    assert p.state_file.exists()
-    assert p.state_file.parent == tmp_path / "sub"
-
-
-# --- emission cache identity --------------------------------------------------
-
-def test_cache_name_encodes_the_window():
-    """Reusing a cache across a changed window would silently align against the
-    wrong frames."""
-    a = make(segments=[Segment(0, 87, 36, 123, 36)]).emissions_cache
-    b = make(segments=[Segment(0, 60, 36, 96, 36)]).emissions_cache
-    assert a != b
-
-
-def test_cache_name_encodes_conditioning():
-    a = make(conditioned=True).emissions_cache
-    b = make(conditioned=False).emissions_cache
-    assert a != b
-    assert "raw" in b.name
-
-
-def test_cache_name_encodes_the_timing_model():
-    a = make(timing_model="model-a").emissions_cache
-    b = make(timing_model="model-b").emissions_cache
-    assert a != b
-
-
-# --- persistence --------------------------------------------------------------
 
 def test_round_trip(tmp_path):
-    p = make(base=str(tmp_path / "OP01"),
-             segments=[Segment(0.5, 87.6, 36.5, 123.6, 36.0, support=7539)],
-             model="m", lyrics_source="romaji", conditioned=False)
-    p.save()
-    q = Project.load(tmp_path / "OP01")
-    assert q.mode == p.mode
-    assert q.model == "m"
-    assert q.timing_model == "m"
-    assert q.selection_model == "m"
-    assert q.lyrics_source == "romaji"
-    assert q.conditioned is False
-    assert len(q.segments) == 1
-    assert q.segments[0].offset == pytest.approx(36.0)
+    project = make(
+        tmp_path / "song.aksal",
+        segments=[Segment(0.5, 87.6, 36.5, 123.6, 36.0, support=7539)],
+        timing_model="timing/id", selection_model="selection/id",
+        analyser="unidic", lyrics_source="romaji", conditioned=False,
+        separated=True,
+        audio_start=1.25, audio_dur=89.5,
+    )
+    project.save()
+    loaded = Project.load(project.root)
+    assert loaded.timing_model == "timing/id"
+    assert loaded.selection_model == "selection/id"
+    assert loaded.analyser == "unidic"
+    assert loaded.lyrics_source == "romaji"
+    assert loaded.conditioned is False
+    assert loaded.separated is True
+    assert loaded.audio_start == pytest.approx(1.25)
+    assert loaded.audio_dur == pytest.approx(89.5)
+    assert loaded.segments[0].offset == pytest.approx(36.0)
 
 
-def test_two_model_roles_round_trip(tmp_path):
-    p = make(base=str(tmp_path / "OP01"), timing_model="timing/id",
-             selection_model="selection/id")
-    p.save()
-    q = Project.load(tmp_path / "OP01")
-    assert q.timing_model == "timing/id"
-    assert q.selection_model == "selection/id"
-
-
-def test_state_file_sits_next_to_the_output(tmp_path):
-    p = make(base=str(tmp_path / "OP01"))
-    p.save()
-    assert (tmp_path / f"OP01{STATE_SUFFIX}").exists()
-
-
-def test_loading_without_a_state_file_says_what_to_do(tmp_path):
-    with pytest.raises(SystemExit, match="no state file"):
+def test_unsupported_or_missing_state_is_rejected(tmp_path):
+    with pytest.raises(SystemExit, match="project not found"):
         Project.load(tmp_path / "missing")
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / STATE_NAME).write_text('{"schema_version": 1}', encoding="utf-8")
+    with pytest.raises(SystemExit, match="Unsupported"):
+        Project.load(root)
 
-
-# --- time mapping is unaffected by the layout change --------------------------
 
 def test_time_mapping_round_trips():
-    p = make(segments=[Segment(0.0, 87.0, 36.0, 123.0, 36.0)])
-    assert p.to_video(10.0) == pytest.approx(46.0)
-    assert p.to_audio(46.0) == pytest.approx(10.0)
+    project = make(segments=[Segment(0.0, 87.0, 36.0, 123.0, 36.0)])
+    assert project.to_video(10.0) == pytest.approx(46.0)
+    assert project.to_audio(46.0) == pytest.approx(10.0)
 
 
-def test_clamp_snaps_a_time_just_outside_a_segment():
-    p = make(segments=[Segment(0.0, 87.0, 36.0, 123.0, 36.0)])
-    assert p.clamp_to_audio(35.0) == pytest.approx(0.0)
-    assert p.clamp_to_audio(200.0) == pytest.approx(87.0)
+def test_clamp_snaps_outside_a_segment():
+    project = make(segments=[Segment(0.0, 87.0, 36.0, 123.0, 36.0)])
+    assert project.clamp_to_audio(35.0) == pytest.approx(0.0)
+    assert project.clamp_to_audio(200.0) == pytest.approx(87.0)

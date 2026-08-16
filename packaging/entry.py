@@ -23,6 +23,21 @@ def main() -> int:
     if getattr(sys, "frozen", False) and not os.environ.get("HF_HOME"):
         os.environ["HF_HOME"] = str(Path(sys.executable).parent / "models")
 
+    if os.environ.get("AKSAL_PACKAGING_SMOKE") == "1":
+        import demucs.api as demucs_api
+        import torch
+        import torchaudio
+        from torchaudio.functional import forced_align
+        from transformers import AutoModel, AutoModelForCTC, AutoProcessor
+
+        from aksal import ass, dualctc, hfmodel, ichiran
+
+        required = (demucs_api, forced_align, AutoModel, AutoModelForCTC,
+                    AutoProcessor, ass, dualctc, hfmodel, ichiran)
+        print(f"packaging imports ok: torch {torch.__version__}, "
+              f"torchaudio {torchaudio.__version__}, {len(required)} probes")
+        return 0
+
     from aksal.cli import main as cli_main
     return cli_main()
 

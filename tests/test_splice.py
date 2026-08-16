@@ -19,7 +19,7 @@ QUIET = lambda *a, **k: None      # noqa: E731
 
 
 def proj(*segments, **kw):
-    return Project(base=Path("x"), video=Path("v.mkv"), mode="reference",
+    return Project(root=Path("x.aksal"), video=Path("v.mkv"), mode="reference",
                    align_audio=Path("a.wav"), segments=list(segments), **kw)
 
 
@@ -144,6 +144,20 @@ def test_reference_source_on_an_empty_map_is_identity():
     src = timing.from_reference(proj())
     assert src.offset == 0.0
     assert src.to_video(12.0) == pytest.approx(12.0)
+
+
+def test_reference_timing_separates_the_reference_when_enabled(monkeypatch):
+    p = proj(*TWO_CHUNK, separated=True, reference=Path("reference.flac"))
+    target = p.audio_dir / "timing-reference-vocals.wav"
+
+    from aksal import separate
+
+    monkeypatch.setattr(
+        separate, "separate",
+        lambda source, output, **_kwargs: target
+        if source == p.reference and output == target else None,
+    )
+    assert timing.from_reference(p).audio == target
 
 
 def test_the_two_sources_get_different_cache_names():

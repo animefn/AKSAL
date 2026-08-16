@@ -19,7 +19,6 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import maximum_filter
 
 from . import tools
 from .audio import FRAME_SEC, decode, logspec
@@ -162,7 +161,26 @@ def chapter_guess(path: Path, keywords=SONG_CHAPTERS) -> float | None:
 # --- strategy 3: fingerprinting ----------------------------------------------
 
 def peaks(S: np.ndarray) -> np.ndarray:
-    local_max = maximum_filter(S, size=PEAK_NEIGHBOURHOOD, mode="constant")
+    if not S.size:
+        return np.empty((0, 2), dtype=np.int64)
+
+    def axis_maximum(values: np.ndarray, size: int, axis: int) -> np.ndarray:
+        """Separable constant-padded maximum filter without a giant view."""
+        before = size // 2
+        after = size - before - 1
+        padding = [(0, 0)] * values.ndim
+        padding[axis] = (before, after)
+        padded = np.pad(values, padding, mode="constant")
+        result = np.full_like(values, -np.inf)
+        extent = values.shape[axis]
+        for offset in range(size):
+            region = [slice(None)] * values.ndim
+            region[axis] = slice(offset, offset + extent)
+            np.maximum(result, padded[tuple(region)], out=result)
+        return result
+
+    rows, columns = PEAK_NEIGHBOURHOOD
+    local_max = axis_maximum(axis_maximum(S, columns, 1), rows, 0)
     floor = np.percentile(S, PEAK_FLOOR_PCT)
     f, t = np.nonzero((S == local_max) & (S > floor))
     order = np.argsort(t)

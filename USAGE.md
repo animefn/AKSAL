@@ -111,10 +111,10 @@ aksal phase1 \
     --video     EP01.mkv \
     --lyrics    lyrics.txt \
     --reference "full song.flac" \
-    -o          D:/karaoke/OP01.lines.ass
+    -o          D:/karaoke/OP01.aksal
 
 # fix the lines in Aegisub, then
-aksal phase2 D:/karaoke/OP01.lines.ass
+aksal phase2 D:/karaoke/OP01.aksal/lines.ass
 ```
 
 `--lyrics` also takes a Uta-Net song URL or an LRCLIB search term directly,
@@ -125,7 +125,7 @@ exactly like a local file:
 ```bash
 aksal phase1 --video EP01.mkv \
     --reference "https://www.youtube.com/watch?v=..." \
-    --lyrics "https://www.uta-net.com/song/361192/" -o OP01.lines.ass
+    --lyrics "https://www.uta-net.com/song/361192/" -o OP01.aksal
 ```
 
 **Endings**: the same command with a later hint. It is searched with two minutes
@@ -133,7 +133,7 @@ of slack either side, so being a minute out costs nothing.
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics ed.txt --reference "ed single.flac" \
-    --song-start 21:30 -o ED01.lines.ass
+    --song-start 21:30 -o ED01.aksal
 ```
 
 **Two episodes in one file**: same again — the search follows the hint. Omit
@@ -141,7 +141,7 @@ aksal phase1 --video EP01.mkv --lyrics ed.txt --reference "ed single.flac" \
 
 ```bash
 aksal phase1 --video "EP03-04.mkv" --lyrics op.txt --reference op.flac \
-    --song-start 11:00 -o OP.lines.ass
+    --song-start 11:00 -o OP.aksal
 ```
 
 ---
@@ -153,7 +153,7 @@ version sings**, in order.
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics tv-size.txt \
-    --song-start 0:36 --duration 90 -o OP01.lines.ass
+    --song-start 0:36 --duration 90 -o OP01.aksal
 ```
 
 Typing the text is the whole cost, and it buys the most accurate line placement
@@ -162,7 +162,7 @@ ending it is the same flag, later:
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics ed-tv.txt \
-    --song-start 21:30 --duration 90 -o ED01.lines.ass
+    --song-start 21:30 --duration 90 -o ED01.aksal
 ```
 
 **Refused:** a full lyric sheet with no reference. Forced alignment cannot say
@@ -187,15 +187,19 @@ lyrics down.
 
 ## Files
 
-Everything is a visible sibling of `-o`, sharing its stem — no project
-directory, nothing hidden:
+`-o/--output-dir` is a self-contained project directory:
 
 ```
-OP01.lines.ass        <- you edit this
-OP01.lyrics.txt       <- fetched lyrics, editable
-OP01.readings.tsv     <- reading overrides, editable
-OP01.kara.jp.ass      <- phase 2 output
-OP01.kara.romaji.ass
+OP01.aksal/
+    project.json
+    lines.ass                  <- you edit this
+    lyrics.txt                 <- fetched lyrics, editable
+    readings.tsv               <- reading overrides, editable
+    selections.json
+    audio/
+    cache/emissions/
+    output/kara.jp.ass
+    output/kara.romaji.ass
 ```
 
 Lyric sheets are normalised before analysis: half-width katakana, full-width
@@ -221,19 +225,15 @@ wrong. `DELETE` in the second column removes a built-in entry:
 誰か	DELETE
 ```
 
-Rows can also be flagged `reading?`. That means a second analyser read the
-word differently AND the audio agreed with it -- so the singer is probably not
-singing what the table says. Nothing is changed for you: measured over six
-songs the audio picked the alternative five times and was right four of them,
-so switching automatically would corrupt one correct reading to fix four.
+Ambiguous Japanese readings are scored as complete sentence hypotheses against
+the line audio. Likely choices feed final mora timing; uncertain alternatives
+remain flagged. Phase 2 repeats this against the corrected line window and
+caches the decision in `selections.json`. Manual table edits always win.
 
-**`OP01.readings.tsv` is worth opening.** Fix any row that is flagged, and any
+**`readings.tsv` is worth opening.** Fix any row that is flagged, and any
 reading the singer does not use — analysers do not know that 永遠 is often sung
 とわ. **Spaces in the reading column mark word breaks**, and they set where the
 romaji karaoke puts its spaces.
-
-If you previously ran an older version, delete `OP01.readings.tsv` and re-run
-phase 1: an unspaced table loads as an override and keeps the old behaviour.
 
 ## The acoustic model
 

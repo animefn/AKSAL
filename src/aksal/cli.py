@@ -15,13 +15,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from . import align as A
-from . import (ass, locate, lyrics as lyrics_mod, moras, reading_selector,
-               readings, romaji, separate)
-from . import timing
-from . import audio as audio_mod
-from . import model_spec
-from .audio import envelope, prepare
+from . import ass, lyrics as lyrics_mod, model_spec, moras, readings, romaji
 from . import project as project_mod
 from .project import Project
 
@@ -46,6 +40,16 @@ DEFAULT_DURATION = 92.0
 # full 4-minute sheet against a TV size needs 2-3x the window. So between 0.55
 # and 1.0 the run continues with a loud warning, and above 1.0 it stops.
 WARN_FIT = 0.55
+LINE_ID_PREFIX = "aksal-line:"
+
+
+def event_line_id(event: ass.Event, fallback: int) -> int:
+    if event.effect.startswith(LINE_ID_PREFIX):
+        try:
+            return int(event.effect[len(LINE_ID_PREFIX):])
+        except ValueError:
+            pass
+    return fallback
 
 
 def check_fits_window(n_units: int, window: float, log=print) -> None:
@@ -154,22 +158,27 @@ def resolve_media(spec: str | None, dest: Path, log=print) -> Path | None:
 # =============================================================================
 
 def cmd_phase1(args) -> None:
+    from . import align as A
+    from . import audio as audio_mod
+    from . import locate, reading_selector, separate
+    from .audio import prepare
+
     video: Path = args.video
     timing_model, selection_model = model_spec.resolve(
         args.model, args.timing_model, args.selection_model)
-    # Everything is a sibling of the output you asked for. No project directory,
-    # nothing written to the tool's own folder.
-    out_lines = args.out or Path.cwd() / f"{video.stem[:60]}.lines.ass"
-    base = project_mod.stem_of(out_lines)
-    base.parent.mkdir(parents=True, exist_ok=True)
+    root = (args.output_dir or project_mod.default_output_dir(video)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    audio_dir = root / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    out_lines = root / "lines.ass"
 
     reference = resolve_media(
-        args.reference, base.parent / (base.name + ".reference.m4a"), log=log)
+        args.reference, audio_dir / "reference.m4a", log=log)
     duration = args.duration if args.duration is not None else DEFAULT_DURATION
 
     mode = "reference" if reference else "video"
     window: tuple[float, float] | None = None   # slice of source to decode
-    log(f"output  : {base}.*")
+    log(f"output directory: {root}")
     log(f"mode    : {mode}")
     log(f"timing model   : {timing_model}")
     log(f"selection model: {selection_model}")
@@ -250,24 +259,26 @@ def cmd_phase1(args) -> None:
             # demucs needs a file, so cut the window out first rather than
             # separating a whole episode to use 80 seconds of it.
             source = audio_mod.extract_wav(
-                source, base.parent / (base.name + ".window.wav"), *window)
+                source, audio_dir / "window.wav", *window)
             window = None
         align_source = separate.separate(
-            source, base.parent / (base.name + ".vocals.wav"),
+            source, audio_dir / "vocals.wav",
             device=args.device, log=log)
 
     log("\nlyrics")
-    lyrics_file = base.parent / (base.name + ".lyrics.txt")
+    lyrics_file = root / "lyrics.txt"
     resolved = lyrics_mod.resolve(args.lyrics, cache=lyrics_file,
                                   refresh=args.refresh_lyrics, log=log)
     log(resolved.describe())
 
-    proj = Project(base=base, video=video,
+    proj = Project(root=root, video=video,
                    mode=mode, align_audio=align_source,
                    reference=reference, segments=segments,
-                   model=args.model or "", timing_model=timing_model,
+                   timing_model=timing_model,
                    selection_model=selection_model,
-                   conditioned=bool(args.separate_vocals))
+                   analyser=args.analyser,
+                   conditioned=bool(args.separate_vocals),
+                   separated=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
@@ -286,7 +297,10 @@ def cmd_phase1(args) -> None:
 
     if script == "romaji":
         log("  romaji source: parsing straight to kana, no analyser involved")
-    overrides = readings.load_overrides(proj.readings_tsv)
+    from . import selection_state
+
+    selection_data = selection_state.load(proj.selections)
+    overrides = selection_state.manual_overrides(proj.readings, selection_data)
     if overrides:
         log(f"  {len(overrides)} manual override(s) carried over")
     rows = readings.from_lyrics(lyrics_file, overrides, script)
@@ -303,7 +317,12 @@ def cmd_phase1(args) -> None:
     aligner = A.Aligner(timing_model, log=log)
     y = prepare(align_source, proj.audio_start, proj.audio_dur,
                 condition=proj.conditioned)
-    lp = aligner.emissions(y, cache=proj.emissions_cache)
+    from .artifacts import array_identity, emissions_key
+
+    audio_identity = array_identity(y)
+    cache_key = emissions_key(
+        aligner.model_identity, aligner.frame_stride, y, audio_identity)
+    lp = aligner.emissions(y, cache=proj.emissions_cache_for(cache_key))
     log(f"  emissions: {tuple(lp.shape)}")
 
     # One unit per character here: phase 1 only needs line boundaries.
@@ -370,12 +389,14 @@ def cmd_phase1(args) -> None:
     # --- 5. settle ambiguous readings over complete line audio --------------
     selections: dict[int, reading_selector.LineSelection] = {}
     selection_errors: dict[int, str] = {}
+    active_selection_keys: set[str] = set()
     group_of = {g[0]["line"]: g for g in groups if g}
     plans = []
     if script != "romaji":
         for line_no, surface, _reading in rows:
             key = readings.normalise_surface(surface)
-            if key in overrides:          # a human correction outranks audio
+            if overrides.get_for(line_no, key) is not None:
+                # A human correction outranks audio.
                 continue
             words = readings.analyse_words(key)
             choices = reading_selector.candidate_choices(
@@ -396,21 +417,39 @@ def cmd_phase1(args) -> None:
 
     if plans:
         log(f"\nreading selection ({len(plans)} ambiguous line(s))")
-        if selection_model == timing_model:
-            selector = aligner
-            selection_lp = lp
-        else:
-            # Rough timing is complete. Release its large tensor and model
-            # before loading a different selector checkpoint.
-            del lp
-            import gc
-
-            del aligner
-            gc.collect()
-            selector = A.Aligner(selection_model, log=log)
-            selection_lp = None
-
+        fresh_plans = []
+        decision_model = model_spec.decision_identity(selection_model)
         for line_no, words, choices, start, end in plans:
+            decision_key = selection_state.decision_key(
+                surface="".join(surface for surface, _reading in words),
+                start=start, end=end, model_identity=decision_model,
+                audio_identity=audio_identity, choices=choices,
+                stage="phase1",
+            )
+            active_selection_keys.add(decision_key)
+            saved = selection_state.get(selection_data, decision_key)
+            if saved is not None:
+                selections[line_no] = saved
+            else:
+                fresh_plans.append(
+                    (decision_key, line_no, words, choices, start, end))
+
+        if fresh_plans:
+            if selection_model == timing_model:
+                selector = aligner
+                selection_lp = lp
+            else:
+                # Rough timing is complete. Release its large tensor and model
+                # before loading a different selector checkpoint.
+                del lp
+                import gc
+
+                del aligner
+                gc.collect()
+                selector = A.Aligner(selection_model, log=log)
+                selection_lp = None
+
+        for decision_key, line_no, words, choices, start, end in fresh_plans:
             try:
                 if selection_lp is not None:
                     f0 = max(int(start / A.SEC_PER_FRAME), 0)
@@ -427,6 +466,9 @@ def cmd_phase1(args) -> None:
                 selections[line_no] = reading_selector.select(
                     words, selector, line_lp, readings.candidate_readings,
                     choices=choices)
+                selection_state.put(
+                    selection_data, decision_key, selections[line_no],
+                    "phase1")
             except reading_selector.SelectionError as exc:
                 selection_errors[line_no] = str(exc)
                 continue
@@ -438,14 +480,11 @@ def cmd_phase1(args) -> None:
         ]
     else:
         del lp
+    selection_state.prune_stage(
+        selection_data, "phase1", active_selection_keys)
 
     # Selected readings must feed the romaji hints and phase-2 table exactly as
     # manual readings do. This local map does not mutate the user's old table.
-    effective_overrides = dict(overrides)
-    for line_no, surface, reading in rows:
-        if line_no in selections:
-            effective_overrides[readings.normalise_surface(surface)] = reading
-
     # --- 6. map to the video timeline and write ------------------------------
     surface_of = {n: s for n, s, _ in rows}
 
@@ -456,7 +495,12 @@ def cmd_phase1(args) -> None:
     # nothing renders on screen because players ignore unknown tag content.
     romaji_of: dict[int, str] = {}
     if args.insert_romaji:
-        for line_no, surface, _reading in rows:
+        for line_no, surface, row_reading in rows:
+            key = readings.normalise_surface(surface)
+            manual = overrides.get_for(line_no, key)
+            selected = selections.get(line_no)
+            value = manual or (selected.reading if selected else row_reading)
+            effective_overrides = {key: value}
             units, owner, cells = readings.units_and_romaji(
                 surface, effective_overrides, script)
             romaji_of[line_no] = "".join(cells)
@@ -497,7 +541,7 @@ def cmd_phase1(args) -> None:
             start=start - args.lead_in,
             end=max(end, start + 0.4) - args.lead_in,
             text=romaji.annotate(surface_of[line_no], romaji_of.get(line_no, "")),
-            style="KARA-JP")
+            style="KARA-JP", effect=f"{LINE_ID_PREFIX}{line_no}")
         events.append(event)
         event_at[line_no] = event
 
@@ -511,7 +555,7 @@ def cmd_phase1(args) -> None:
     unclear: list[tuple] = []
     notes: list[ass.Event] = []
     for line_no, surface, reading in rows:
-        grp = next((g for g in groups if g[0]["line"] == line_no), None)
+        grp = group_of.get(line_no)
         flag = readings.flags_for(surface, reading, script)
         if grp:
             weak = sum(1 for c in grp if c["conf"] < 0.02)
@@ -558,12 +602,13 @@ def cmd_phase1(args) -> None:
                 text=f"AKSAL: {surf} candidates {alternatives}; kept "
                      f"{ours_r} (top {probability:.1%}, uncertain)"))
 
-    ass.write(out_lines, events + notes, [ass.STYLE_JP],
-              project=base.resolve())
-    readings.write_table(proj.readings_tsv, table)
+    ass.write(out_lines, events + notes, [ass.STYLE_JP], project=root)
+    readings.write_table(proj.readings, table)
+    selection_state.update_table_baseline(selection_data, table, overrides)
+    selection_state.save(proj.selections, selection_data)
 
     log(f"\nwrote {out_lines}   ({len(events)} lines)")
-    log(f"wrote {proj.readings_tsv}")
+    log(f"wrote {proj.readings}")
 
     # AMBIGUOUS READINGS ARE REPORTED, NEVER BURIED. A word like 心 is こころ
     # or しん and the kanji does not say which; the audio does, when it can.
@@ -586,7 +631,7 @@ def cmd_phase1(args) -> None:
         if len(unclear) > 12:
             log(f"  ... and {len(unclear) - 12} more")
     if decided_by_audio or unclear:
-        log(f"\n  all of these are marked in {proj.readings_tsv.name} and as "
+        log(f"\n  all of these are marked in {proj.readings.name} and as "
             f"comments in the ASS; correct any there and re-run.")
     if selection_errors:
         log(f"\n{len(selection_errors)} ambiguous line(s) could not be "
@@ -608,30 +653,33 @@ def cmd_phase1(args) -> None:
 # phase 2
 # =============================================================================
 
-def resolve_base(lines_file: Path, explicit: Path | None) -> Path:
-    """Find the stem whose state file belongs to this lines file.
+def resolve_project_root(lines_file: Path, explicit: Path | None) -> Path:
+    """Find the output directory whose state belongs to this lines file.
 
     Phase 2 needs the audio path, the time mapping and the readings, but you
     should not have to type any of that -- phase 1 wrote it next door. Tried in
     order, so an editor that mangles the header stamp is still recoverable.
     """
     if explicit:
-        return project_mod.stem_of(explicit) if explicit.suffix else explicit
+        root = explicit.resolve()
+        if (root / project_mod.STATE_NAME).exists():
+            return root
+        raise SystemExit(f"no ASKAL project at {root / project_mod.STATE_NAME}")
 
     stamped = ass.read_project_stamp(lines_file)
     if stamped is not None:
-        cand = Path(stamped)
-        if (cand.parent / (cand.name + project_mod.STATE_SUFFIX)).exists():
-            return cand
+        root = Path(stamped)
+        if (root / project_mod.STATE_NAME).exists():
+            return root
 
-    guess = project_mod.stem_of(lines_file)
-    if (guess.parent / (guess.name + project_mod.STATE_SUFFIX)).exists():
-        return guess
+    root = lines_file.resolve().parent
+    if (root / project_mod.STATE_NAME).exists():
+        return root
 
     raise SystemExit(
         f"no state file for {lines_file.name}.\n"
-        f"  looked for: a header stamp, then "
-        f"{guess.name + project_mod.STATE_SUFFIX} beside it\n\n"
+        f"  looked for an ASS header stamp, then {project_mod.STATE_NAME} "
+        f"beside it\n\n"
         "  If this subtitle was made by hand rather than by phase1, pass\n"
         "  --video (and --reference if you have the clean track):\n"
         f"    aksal phase2 {lines_file} --video EPISODE.mkv")
@@ -647,13 +695,18 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
     song against a whole episode would otherwise compute emissions over 24 minutes
     of audio, nearly all of it dialogue with no text to match.
     """
-    base = project_mod.stem_of(lines_file)
-    base.parent.mkdir(parents=True, exist_ok=True)
+    from . import audio as audio_mod
+    from . import locate, separate
+
+    root = (args.output_dir or project_mod.default_output_dir(lines_file)).resolve()
+    root.mkdir(parents=True, exist_ok=True)
+    audio_dir = root / "audio"
+    audio_dir.mkdir(parents=True, exist_ok=True)
 
     # Same contract as phase 1: a local file or a URL for yt-dlp, cached
     # beside the project under the same name so the two phases share it.
     reference = resolve_media(
-        args.reference, base.parent / (base.name + ".reference.m4a"), log=log)
+        args.reference, audio_dir / "reference.m4a", log=log)
 
     pad = 2.0
     start = max(min(e.start for e in events) - pad, 0.0)
@@ -687,28 +740,34 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
         log("\nisolating vocals")
         if a_start is not None:
             source = audio_mod.extract_wav(
-                source, base.parent / (base.name + ".window.wav"),
+                source, audio_dir / "window.wav",
                 a_start, a_dur)
             a_start = a_dur = None
         align_source = separate.separate(
-            source, base.parent / (base.name + ".vocals.wav"),
+            source, audio_dir / "vocals.wav",
             device=args.device, log=log)
 
     timing_model, selection_model = model_spec.resolve(
         args.model, args.timing_model, args.selection_model)
-    proj = Project(base=base, video=args.video,
+    proj = Project(root=root, video=args.video,
                    mode="reference" if reference else "video",
                    align_audio=align_source, reference=reference,
-                   segments=segments, model=args.model or "",
+                   segments=segments,
                    timing_model=timing_model,
                    selection_model=selection_model,
-                   conditioned=bool(args.separate_vocals))
+                   analyser=args.analyser or "ichiran",
+                   conditioned=bool(args.separate_vocals),
+                   separated=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = a_start, a_dur
     proj.save()
     return proj
 
 
 def cmd_phase2(args) -> None:
+    from . import align as A
+    from . import reading_selector, timing
+    from .audio import envelope, prepare
+
     lines_file: Path = args.lines
     if not lines_file.exists():
         raise SystemExit(f"lines file not found: {lines_file}")
@@ -729,14 +788,13 @@ def cmd_phase2(args) -> None:
         proj = standalone_project(lines_file, events, args)
     else:
         try:
-            proj = Project.load(resolve_base(lines_file, args.project))
+            proj = Project.load(resolve_project_root(lines_file, args.output_dir))
         except SystemExit as exc:
             raise SystemExit(
                 f"{exc}\n\n"
                 "  If this subtitle was made by hand rather than by phase1,\n"
                 "  pass --video (and --reference if you have the clean track):\n"
                 f"    aksal phase2 {lines_file} --video EPISODE.mkv")
-        proj.audio_start = proj.audio_dur = None
 
     # Command-line role flags override saved project choices. The general
     # --model applies to both roles; a role-specific flag wins over it.
@@ -747,13 +805,23 @@ def cmd_phase2(args) -> None:
         proj.timing_model = args.timing_model
     if args.selection_model:
         proj.selection_model = args.selection_model
+    if args.analyser:
+        proj.analyser = args.analyser
+    readings.set_engine(proj.analyser)
+    if args.separate_vocals:
+        proj.separated = True
+        proj.conditioned = True
+    proj.save()
 
     log(f"\nproject : {proj.name}  ({proj.mode} mode)")
     log(f"lines   : {lines_file}   {len(events)} line(s)")
 
-    overrides = readings.load_overrides(proj.readings_tsv)
+    from . import selection_state
+
+    selection_data = selection_state.load(proj.selections)
+    overrides = selection_state.manual_overrides(proj.readings, selection_data)
     if overrides:
-        log(f"  {len(overrides)} reading override(s)")
+        log(f"  {len(overrides)} manual reading override(s)")
 
     # A hand-made subtitle may be romaji; the ASS text is the only clue.
     if args.video:
@@ -770,44 +838,157 @@ def cmd_phase2(args) -> None:
     if args.time_against == "video":
         first = min(e.start for e in events)
         last = max(e.end for e in events)
-        src = timing.from_video(proj, first, last)
+        src = timing.from_video(
+            proj, first, last, device=args.device, log=log)
     else:
-        src = timing.from_reference(proj)
+        if proj.mode != "reference" or proj.reference is None:
+            raise SystemExit(
+                "--time-against reference requires a project created with "
+                "--reference")
+        src = timing.from_reference(proj, device=args.device, log=log)
     log(f"  timing against {src.describe()}")
 
-    aligner = A.Aligner(proj.timing_model, log=log)
     y = prepare(src.audio, src.start, src.dur, condition=src.conditioned)
-    lp = aligner.emissions(
-        y, cache=proj.emissions_cache_for(src.cache_tag, proj.timing_model))
+    from .artifacts import array_identity, emissions_key
+
+    audio_identity = array_identity(y)
+
+    def line_audio_interval(event: ass.Event) -> tuple[float, float]:
+        if src.name == "video":
+            start, end = src.to_audio(event.start), src.to_audio(event.end)
+        else:
+            segment = (proj.segment_at_video(event.start)
+                       or proj.segment_at_video(event.end))
+            start = proj.clamp_to_audio(event.start)
+            end = proj.clamp_to_audio(event.end)
+            if segment is not None:
+                start = min(max(start, segment.ref_start), segment.ref_end)
+                end = min(max(end, segment.ref_start), segment.ref_end)
+        if end <= start:
+            end = start + 0.5
+        return start, end
+
+    # Reading selection is a line-level operation and therefore runs before
+    # mora timing. It uses the exact corrected ASS windows, persists decisions,
+    # and reuses them only while text, audio, model and candidates all match.
+    selected_by_event: dict[int, reading_selector.LineSelection] = {}
+    selection_errors: dict[int, str] = {}
+    selection_plans = []
+    active_selection_keys: set[str] = set()
+    if proj.lyrics_source != "romaji":
+        for event_index, event in enumerate(events):
+            surface = readings.normalise_surface(event.plain)
+            line_id = event_line_id(event, event_index + 1)
+            if not surface or overrides.get_for(line_id, surface) is not None:
+                continue
+            words = readings.analyse_words(surface)
+            choices = reading_selector.candidate_choices(
+                words, readings.candidate_readings)
+            if any(len(choice) > 1 for choice in choices):
+                start, end = line_audio_interval(event)
+                selection_plans.append(
+                    (event_index, surface, words, choices, start, end))
+
+    aligner = None
+    lp = None
+    if selection_plans:
+        log(f"\nreading selection ({len(selection_plans)} ambiguous line(s))")
+        fresh_plans = []
+        decision_model = model_spec.decision_identity(proj.selection_model)
+        for event_index, surface, words, choices, start, end in selection_plans:
+            key = selection_state.decision_key(
+                surface=surface, start=start, end=end,
+                model_identity=decision_model,
+                audio_identity=audio_identity, choices=choices,
+                stage="phase2",
+            )
+            active_selection_keys.add(key)
+            saved = selection_state.get(selection_data, key)
+            if saved is not None:
+                selected_by_event[event_index] = saved
+            else:
+                fresh_plans.append(
+                    (key, event_index, words, choices, start, end))
+
+        if fresh_plans:
+            selector = A.Aligner(proj.selection_model, log=log)
+            selector_cache_key = emissions_key(
+                selector.model_identity, selector.frame_stride, y,
+                audio_identity)
+            selection_lp = selector.emissions(
+                y, cache=proj.emissions_cache_for(selector_cache_key))
+
+        for key, event_index, words, choices, start, end in fresh_plans:
+            f0 = max(int(start / A.SEC_PER_FRAME), 0)
+            f1 = min(int(end / A.SEC_PER_FRAME) + 1, selection_lp.shape[0])
+            try:
+                selection = reading_selector.select(
+                    words, selector, selection_lp[f0:f1],
+                    readings.candidate_readings, choices=choices)
+            except reading_selector.SelectionError as exc:
+                selection_errors[event_index] = str(exc)
+                continue
+            selected_by_event[event_index] = selection
+            selection_state.put(
+                selection_data, key, selection, "phase2")
+
+        if fresh_plans and proj.selection_model == proj.timing_model:
+            aligner, lp = selector, selection_lp
+        elif fresh_plans:
+            del selection_lp, selector
+            import gc
+
+            gc.collect()
+
+    selection_state.prune_stage(
+        selection_data, "phase2", active_selection_keys)
+
+    if aligner is None:
+        aligner = A.Aligner(proj.timing_model, log=log)
+    if lp is None:
+        cache_key = emissions_key(
+            aligner.model_identity, aligner.frame_stride, y, audio_identity)
+        lp = aligner.emissions(y, cache=proj.emissions_cache_for(cache_key))
     env = envelope(y)
 
     jp_events: list[ass.Event] = []
     ro_events: list[ass.Event] = []
     snapped = 0
 
-    for ev in events:
+    phase2_table: list[tuple[int, str, str, str]] = []
+    for event_index, ev in enumerate(events):
         surface = ev.plain
         if not surface:
             continue
-        units, owner, ro_cells = readings.units_and_romaji(
-            surface, overrides, proj.lyrics_source)
+        line_id = event_line_id(ev, event_index + 1)
+        manual = overrides.get_for(line_id, surface)
+        line_overrides = ({readings.normalise_surface(surface): manual}
+                          if manual else {})
+        selected = selected_by_event.get(event_index)
+        if selected is not None:
+            line_overrides[readings.normalise_surface(surface)] = selected.reading
+        if proj.lyrics_source == "romaji":
+            units, owner, ro_cells = readings.units_and_romaji(
+                surface, line_overrides, "romaji")
+            chosen_reading = ""
+        else:
+            words = readings.resolve_words(surface, line_overrides, "jp")
+            units, owner = moras.split_words(words)
+            ro_cells = romaji.line_spaced(units, owner)
+            chosen_reading = " ".join(words)
         if not units:
             continue
 
+        if proj.lyrics_source != "romaji":
+            flag = readings.flags_for(surface, chosen_reading, "jp")
+            if event_index in selection_errors:
+                flag = ",".join(filter(None, [flag, "selection-error"]))
+            phase2_table.append(
+                (line_id, flag, surface, chosen_reading))
+
         # Re-align inside the window you approved. Because the window is ground
         # truth, an error here cannot leak into any other line.
-        if src.name == "video":
-            a, b = src.to_audio(ev.start), src.to_audio(ev.end)
-        else:
-            # Clamp both ends into the SAME chunk: a window spanning a cut
-            # would slice across audio the video does not contain.
-            seg = proj.segment_at_video(ev.start) or proj.segment_at_video(ev.end)
-            a, b = proj.clamp_to_audio(ev.start), proj.clamp_to_audio(ev.end)
-            if seg is not None:
-                a = min(max(a, seg.ref_start), seg.ref_end)
-                b = min(max(b, seg.ref_start), seg.ref_end)
-        if b <= a:
-            b = a + 0.5
+        a, b = line_audio_interval(ev)
         f0, f1 = int(a / A.SEC_PER_FRAME), int(b / A.SEC_PER_FRAME) + 1
         f1 = min(f1, lp.shape[0])
 
@@ -856,22 +1037,26 @@ def cmd_phase2(args) -> None:
             start=ev.start, end=ev.end, style="KARA-RO",
             text=ass.karaoke_text(ro_cells, cell_starts, ev.start, ev.end)))
 
+    if phase2_table:
+        readings.write_table(proj.readings, phase2_table)
+        selection_state.update_table_baseline(
+            selection_data, phase2_table, overrides)
+    selection_state.save(proj.selections, selection_data)
+
     # From a romaji sheet the "JP" track is reconstructed kana, not the original
     # orthography -- there is no kanji to recover -- so name it honestly.
     kana_only = proj.lyrics_source == "romaji"
-    base = proj.base
-
     if snapped:
         log(f"  snapped {snapped} mora start(s) to onsets")
     log("")
     if "jp" in wanted:
-        out_jp = base.parent / (
-            base.name + (".kara.kana.ass" if kana_only else ".kara.jp.ass"))
-        ass.write(out_jp, jp_events, [ass.STYLE_JP], project=base.resolve())
+        out_jp = proj.output_dir / (
+            "kara.kana.ass" if kana_only else "kara.jp.ass")
+        ass.write(out_jp, jp_events, [ass.STYLE_JP], project=proj.root)
         log(f"wrote {out_jp}")
     if "romaji" in wanted:
-        out_ro = base.parent / (base.name + ".kara.romaji.ass")
-        ass.write(out_ro, ro_events, [ass.STYLE_RO], project=base.resolve())
+        out_ro = proj.output_dir / "kara.romaji.ass"
+        ass.write(out_ro, ro_events, [ass.STYLE_RO], project=proj.root)
         log(f"wrote {out_ro}")
 
     mismatched = [i for i, (j, r) in enumerate(zip(jp_events, ro_events))
@@ -894,12 +1079,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     p1 = sub.add_parser("phase1", help="produce timed lines for you to correct")
     p1.add_argument("--video", required=True, type=Path)
-    p1.add_argument("-o", "--out", type=Path, default=None,
-                    help="where to write the lines file, e.g. "
-                         "D:/karaoke/OP01.lines.ass. Everything else -- lyrics, "
-                         "readings, state and caches -- is written beside it "
-                         "sharing that stem. Default: the video's name in the "
-                         "current directory.")
+    p1.add_argument("-o", "--output-dir", type=Path, default=None,
+                    help="project directory for lines, editable readings, "
+                         "audio, caches and karaoke output. Default: "
+                         "<video>.aksal beside the video.")
     p1.add_argument("--lyrics", required=True,
                     help="a local file, a Uta-Net song URL, or a search term "
                          "for LRCLIB. Whatever the source, the text is cached "
@@ -985,9 +1168,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --video: align against this clean track instead "
                          "of the video's own audio (better, needs the song). "
                          "A local file or a URL for yt-dlp, as in phase1.")
-    p2.add_argument("--project", type=Path,
-                    help="override the stem whose state file to use; normally "
-                         "found from the lines file automatically")
+    p2.add_argument("-o", "--output-dir", type=Path,
+                    help="project directory. Normally inferred from the lines "
+                         "file; required to choose a location for a hand-made "
+                         "subtitle when the default is unsuitable.")
     p2.add_argument("--snap", action="store_true", default=True,
                     help="snap mora starts to energy onsets (default: on)")
     p2.add_argument("--no-snap", dest="snap", action="store_false")
@@ -1004,8 +1188,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "because the check that a download is really this "
                          "show's recording is fingerprinting it against your "
                          "episode.")
-    pf.add_argument("-o", "--out", type=Path, default=None,
-                    help="where phase 1 should write; everything is a sibling")
+    pf.add_argument("-o", "--output-dir", type=Path, default=None,
+                    help="project directory passed to phase 1")
     pf.add_argument("--op", dest="kind", action="store_const", const="OP",
                     help="consider only openings")
     pf.add_argument("--ed", dest="kind", action="store_const", const="ED",
@@ -1023,11 +1207,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run phase 1 immediately without asking")
     pf.set_defaults(func=cmd_find)
 
-    for sp in (p1, p2):
+    for sp in (p1, p2, pf):
         sp.add_argument("--analyser", "--analyzer", dest="analyser",
-                        choices=readings.ENGINES, default="ichiran",
+                        choices=readings.ENGINES,
+                        default=None if sp is p2 else "ichiran",
                         help="which engine decides word boundaries and "
-                             "readings (default: ichiran). ichiran looks words "
+                             "readings (phase 2 keeps the project's choice; "
+                             "otherwise default: ichiran). ichiran looks words "
                              "up in JMdict and picks the best parse, so it "
                              "reads set phrases as units -- 夜が明ける is "
                              "yo ga akeru, not yoru ga akeru. unidic is the "
@@ -1064,14 +1250,16 @@ def cmd_find(args) -> None:
 
     video: Path | None = args.video
     stem = video.stem[:60] if video else args.anime[:60].replace(" ", "-")
-    out = args.out or Path.cwd() / f"{stem}.lines.ass"
-    out.parent.mkdir(parents=True, exist_ok=True)
+    root = args.output_dir or (
+        project_mod.default_output_dir(video) if video
+        else Path.cwd() / f"{stem}.aksal")
+    root.mkdir(parents=True, exist_ok=True)
 
     if video is None:
         log("  lookup only: no --video, so no reference track can be verified")
 
     duration = args.duration if args.duration is not None else DEFAULT_DURATION
-    found = discover.run(args.anime, video, out, kind=args.kind,
+    found = discover.run(args.anime, video, root / "lines.ass", kind=args.kind,
                          song_start=args.song_start, duration=duration,
                          auto=args.yes, pick=args.pick, log=log)
 
@@ -1105,7 +1293,16 @@ def cmd_find(args) -> None:
             "no reference track was verified, so phase 1 needs BOTH\n"
             "  --song-start and lyrics containing only the lines your cut sings.")
 
-    cmd = discover.phase1_command(found, video, out, args.song_start)
+    cmd = discover.phase1_command(found, video, root, args.song_start)
+    cmd += ["--analyser", args.analyser]
+    for flag, value in (("--model", args.model),
+                        ("--timing-model", args.timing_model),
+                        ("--selection-model", args.selection_model)):
+        if value:
+            cmd += [flag, value]
+    if args.separate_vocals:
+        cmd.append("--separate-audio")
+        cmd += ["--device", args.device]
     log("\nphase 1 command:\n  " + " ".join(cmd))
 
     go = args.run or args.yes or discover.ask(
@@ -1132,12 +1329,12 @@ def main(argv: list[str] | None = None) -> int:
     if getattr(args, "analyser", None):
         readings.set_engine(args.analyser)
 
-    # Checked once, up front. Every audio step shells out to ffmpeg, so finding
-    # out it is missing forty seconds into a fingerprint search is worse than
-    # being asked about it immediately.
-    from . import tools
+    # Lookup-only `find` does not touch media. All other paths do, and check
+    # once up front so a missing ffmpeg is reported before model loading.
+    if args.cmd != "find" or args.video is not None:
+        from . import tools
 
-    tools.ensure(log=log)
+        tools.ensure(log=log)
 
     args.func(args)
     return 0

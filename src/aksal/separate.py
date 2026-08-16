@@ -18,6 +18,7 @@ honest, and it is the same code path packaged and unpackaged.
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
 
 MODEL = "htdemucs"
 
@@ -30,7 +31,15 @@ def separate(source: Path, target: Path, device: str = "cpu",
     uses; a re-run costs nothing. demucs' own model weights (~80 MB) download
     on first use into the torch cache, once, shared across every song.
     """
-    if target.exists() and not force:
+    from . import artifacts
+
+    metadata = target.with_suffix(target.suffix + ".json")
+    identity = artifacts.derived_audio_identity(
+        source, operation=artifacts.SEPARATION_PIPELINE,
+        options={"model": MODEL},
+    )
+    if (target.exists() and not force
+            and artifacts.metadata_matches(metadata, identity)):
         log(f"  using cached stem: {target.name}")
         return target
 
@@ -55,6 +64,17 @@ def separate(source: Path, target: Path, device: str = "cpu",
             f"{Path(source).name}")
 
     target.parent.mkdir(parents=True, exist_ok=True)
-    save_audio(stems["vocals"], str(target), samplerate=separator.samplerate)
+    with tempfile.NamedTemporaryFile(
+        dir=target.parent, prefix=f".{target.stem}-", suffix=target.suffix,
+        delete=False
+    ) as handle:
+        temporary = Path(handle.name)
+    try:
+        save_audio(stems["vocals"], str(temporary),
+                   samplerate=separator.samplerate)
+        temporary.replace(target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    artifacts.atomic_write_json(metadata, identity)
     log(f"  vocal stem: {target.name}")
     return target

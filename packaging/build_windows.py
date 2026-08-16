@@ -69,7 +69,6 @@ HIDDEN = [
     "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
     "aksal.discover", "aksal.tools",
     "demucs.api",
-    "scipy.special.cython_special",
 ]
 
 
@@ -94,6 +93,7 @@ def main() -> int:
         # transformers and fugashi resolve things at import time that a static
         # analyser cannot see.
         "--collect-submodules", "transformers.models.wav2vec2",
+        "--collect-submodules", "transformers.models.wavlm",
         "--collect-data", "unidic_lite",
         "--collect-data", "ipadic",
         # pkg_resources is dragged in by something in the dependency tree, and
@@ -133,6 +133,14 @@ def main() -> int:
         print((probe.stderr or probe.stdout or "")[-1500:])
         return 1
     print("  smoke test: --help ok")
+    smoke_env = dict(os.environ, AKSAL_PACKAGING_SMOKE="1")
+    imports = subprocess.run(
+        [str(exe)], capture_output=True, text=True, env=smoke_env)
+    if imports.returncode != 0 or "packaging imports ok" not in imports.stdout:
+        print("\nBUILD IMPORT SMOKE FAILED:")
+        print((imports.stderr or imports.stdout or "")[-1500:])
+        return 1
+    print("  smoke test: model and separation imports ok")
 
     target = DIST / ("aksal.exe" if onefile else "aksal")
     total = (target.stat().st_size if onefile else

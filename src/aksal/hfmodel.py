@@ -19,15 +19,41 @@ everywhere it occurs. A different stride silently scales every timestamp.
 """
 from __future__ import annotations
 
+import hashlib
+from pathlib import Path
+
 KANA_RANGE = ("ぁ", "ヿ")      # hiragana + katakana
 MIN_KANA_SHARE = 0.5
+
+
+def _model_identity(model_id: str, model) -> str:
+    commit = getattr(model.config, "_commit_hash", None)
+    if commit:
+        return f"hf:{model_id}@{commit}"
+    path = Path(model_id)
+    if path.exists():
+        digest = hashlib.sha256()
+        items = [path] if path.is_file() else sorted(
+            p for p in path.rglob("*") if p.is_file())
+        for item in items:
+            stat = item.stat()
+            name = item.name if path.is_file() else str(item.relative_to(path))
+            digest.update(name.encode("utf-8"))
+            digest.update(f":{stat.st_size}:{stat.st_mtime_ns}".encode("ascii"))
+        return f"local:{path.resolve()}@{digest.hexdigest()}"
+    # Some old Hub configs do not retain their resolved commit. Include the
+    # complete config rather than pretending the bare repository ID is a fixed
+    # revision; users can also pass an explicit local snapshot for strict pinning.
+    config_hash = hashlib.sha256(
+        model.config.to_json_string().encode("utf-8")).hexdigest()
+    return f"hf:{model_id}@config-{config_hash}"
 
 
 def _cached_first(cls, model_id: str, **kwargs):
     """Load without touching the network when the checkpoint is cached."""
     try:
         return cls.from_pretrained(model_id, local_files_only=True, **kwargs)
-    except Exception:                                # noqa: BLE001
+    except OSError:
         return cls.from_pretrained(model_id, **kwargs)
 
 
@@ -37,7 +63,7 @@ def _config_dict(model_id: str) -> dict:
     try:
         got, _ = PretrainedConfig.get_config_dict(
             model_id, local_files_only=True)
-    except Exception:                                # noqa: BLE001
+    except OSError:
         got, _ = PretrainedConfig.get_config_dict(model_id)
     return got
 
@@ -57,9 +83,9 @@ def load_into(aligner, model_id: str, log=print) -> None:
     import warnings
 
     from transformers import (AutoFeatureExtractor, AutoModel,
-                              PreTrainedTokenizerFast, Wav2Vec2Config,
-                              Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC,
-                              Wav2Vec2Processor)
+                              AutoModelForCTC, AutoProcessor,
+                              PreTrainedTokenizerFast,
+                              Wav2Vec2FeatureExtractor)
     log(f"  acoustic model: {model_id}")
 
     # Checkpoints uploaded years ago bake `gradient_checkpointing` into their
@@ -91,12 +117,13 @@ def load_into(aligner, model_id: str, log=print) -> None:
                 AutoModel, model_id, trust_remote_code=True)
             output_key = "kana_logits"
         else:
-            processor = _cached_first(Wav2Vec2Processor, model_id)
-            tokenizer = processor.tokenizer
-            cfg_dict.pop("gradient_checkpointing", None)
-            model = _cached_first(
-                Wav2Vec2ForCTC, model_id,
-                config=Wav2Vec2Config(**cfg_dict))
+            processor = _cached_first(AutoProcessor, model_id)
+            tokenizer = getattr(processor, "tokenizer", None)
+            if tokenizer is None:
+                raise SystemExit(
+                    f"{model_id} has no CTC tokenizer. ASKAL needs a model "
+                    "that maps audio frames directly to kana tokens.")
+            model = _cached_first(AutoModelForCTC, model_id)
             output_key = None
     model.eval()
 
@@ -125,10 +152,18 @@ def load_into(aligner, model_id: str, log=print) -> None:
     stride = 1
     for k in getattr(model.config, "conv_stride", []) or []:
         stride *= int(k)
-    if stride and stride != 320:
-        log(f"  WARNING: this model downsamples by {stride}, not 320. Every "
-            "timestamp will be scaled by "
-            f"{stride / 320:.2f} unless MODEL_STRIDE is changed to match.")
+    if stride != 320:
+        raise SystemExit(
+            f"{model_id} has an audio stride of {stride} samples, but ASKAL "
+            "currently supports only 320-sample (20 ms) CTC frames. Refusing "
+            "the model because accepting it would silently scale every "
+            "timestamp incorrectly.")
+
+    output_size = int(getattr(model.config, "vocab_size", len(vocab)))
+    if output_size != len(vocab):
+        raise SystemExit(
+            f"{model_id} emits {output_size} logits but its tokenizer contains "
+            f"{len(vocab)} tokens; token IDs cannot be aligned safely.")
 
     aligner.processor = processor
     aligner.model = model
@@ -136,5 +171,8 @@ def load_into(aligner, model_id: str, log=print) -> None:
     aligner.vocab = vocab
     aligner.blank = blank
     aligner.output_key = output_key
+    aligner.model_identity = _model_identity(model_id, model)
+    aligner.frame_stride = stride
+    aligner.output_size = output_size
     aligner.log = log
     log(f"    {len(vocab)} tokens, {share:.0%} kana, blank at {blank}")

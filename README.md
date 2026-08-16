@@ -9,9 +9,9 @@ The tool supersedes our previous [ksplitter](https://github.com/animefn/ksplitte
 
 
 ```bash
-aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.lines.ass
+aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.aksal
 # fix the lines in Aegisub, then
-aksal phase2 OP01.lines.ass
+aksal phase2 OP01.aksal/lines.ass
 ```
 
 *أكسل — "lazier"*
@@ -110,8 +110,8 @@ acoustic model. On a pip install, separation is an extra:
 `pip install aksal[separate]` (or just `pip install demucs`).
 
 The acoustic model downloads on first run (~630 MB), is cached, and is shared
-across every song. Everything else a run produces is per-song and lives beside
-your output.
+across every song. Everything else a run produces is contained in its output
+directory.
 
 `--model` accepts any other CTC model that emits kana, as a Hugging Face id or a
 checkpoint path. The three things the pipeline actually requires -- a kana
@@ -122,28 +122,27 @@ one fails silently rather than loudly.
 
 ## Where files go
 
-Everything a run produces is a **visible sibling of the output**, sharing its
-stem. There is no project directory, no hidden state, and nothing is written to
-the tool's own folder:
+`-o/--output-dir` names one self-contained project directory. If omitted it is
+`<video>.aksal` beside the video. Nothing is written to the tool's own folder:
 
 ```
-D:/Mykaraoke/
-    OP01.lines.ass          <- you edit this
-    OP01.lyrics.txt         <- fetched lyrics (in case of web import), editable
-    OP01.readings.tsv       <- reading overrides, editable
-    OP01.aksal.json         <- what phase 1 found
-    OP01.emissions.*.pt     <- cache
-    OP01.reference.m4a      <- only when --reference was a URL
-    OP01.vocals.wav         <- only with --separate-audio
-    OP01.kara.jp.ass        <- phase 2 output
-    OP01.kara.romaji.ass
+D:/Mykaraoke/OP01.aksal/
+    project.json
+    lines.ass               <- you edit this
+    lyrics.txt              <- fetched lyrics, editable
+    readings.tsv            <- reading overrides, editable
+    selections.json         <- reusable audio reading decisions
+    audio/                  <- reference/window/vocal derivatives
+    cache/emissions/        <- model emissions
+    output/kara.jp.ass      <- phase 2 output
+    output/kara.romaji.ass
 ```
 
 The caches live here too, deliberately. They are large, but they belong to one
 song and are worthless once you are done with it, so you can delete them once you have finished your work on that specific song.
 
-Phase 2 needs no arguments beyond the lines file. It finds `OP01.aksal.json`
-next to it.
+Phase 2 needs no arguments beyond `lines.ass`; it finds `project.json` in the
+same directory.
 
 ---
 
@@ -208,10 +207,10 @@ aksal phase1 \
     --video     EP01.mkv \
     --lyrics    lyrics.txt \
     --reference "full song.flac" \
-    -o          D:/karaoke/OP01.lines.ass
+    -o          D:/karaoke/OP01.aksal
 
 # fix the lines in Aegisub, then
-aksal phase2 D:/karaoke/OP01.lines.ass
+aksal phase2 D:/karaoke/OP01.aksal/lines.ass
 ```
 
 `--lyrics` takes a **local file**, a **Uta-Net song URL**, or a **search term
@@ -222,7 +221,7 @@ anything yt-dlp understands — downloaded once and cached beside the output:
 ```bash
 aksal phase1 --video EP01.mkv \
     --reference "https://www.youtube.com/watch?v=..." \
-    --lyrics "https://www.uta-net.com/song/361192/" -o OP01.lines.ass
+    --lyrics "https://www.uta-net.com/song/361192/" -o OP01.aksal
 ```
 
 A fetched reference gets no special trust: the fingerprint match that runs
@@ -233,7 +232,7 @@ with the same message a wrong file would.
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics ed.txt --reference "ed single.flac" \
-    --song-start 21:30 -o ED01.lines.ass
+    --song-start 21:30 -o ED01.aksal
 ```
 
 ### Lyrics trimmed to your cut — no reference needed
@@ -242,7 +241,7 @@ The file must hold **only the lines your version sings**, in order.
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics tv-size.txt \
-    --song-start 0:36 --duration 90 -o OP01.lines.ass
+    --song-start 0:36 --duration 90 -o OP01.aksal
 ```
 
 ### You only know the anime — `find`
@@ -303,7 +302,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 |---|---|---|
 | `--video PATH` | required | Video containing the song. |
 | `--lyrics SOURCE` | required | A local file, a Uta-Net song URL, or a search term for LRCLIB. Cached beside your output for hand-correction. |
-| `-o`, `--out PATH` | `<video>.lines.ass` here | Where to write the lines file. **Everything else is written beside it, sharing that stem.** |
+| `-o`, `--output-dir PATH` | `<video>.aksal` beside video | Self-contained project directory. |
 | `--reference PATH\|URL` | — | The official track: a local file, or a URL for yt-dlp (cached beside the output). Lets you use the **full** lyric sheet: cut lines drop out automatically. |
 | `--song-start TIME` | — | Roughly where the song starts, e.g. `0:36` or `21:30`. A hint with `--reference`; required and exact-ish without one. |
 | `--duration TIME` | `92` (announced when assumed) | How long the song runs in the video, e.g. `90` or `1:30`. Without `--reference` it also bounds the lyrics. |
@@ -317,7 +316,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--skip-cost N` | off | Let audio between lines match nothing. Measured a win on two songs and a regression on three, so off; try `-1.5` if output looks smeared across an instrumental. |
 | `--model SPEC` | built-in | A Hugging Face id or a checkpoint path. Must emit kana; refused if not. |
 | `--separate-audio` | off | Isolate vocals with demucs first. A wash for ~4× the runtime; worth trying on a noisy mix. |
-| `--device` | auto | demucs device. |
+| `--device` | `cpu` | demucs device. |
 
 ### phase2 — corrected lines to karaoke
 
@@ -330,8 +329,11 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--group` | `syllable` | `syllable` or `word`. Timing is identical; only the cell boundaries differ. |
 | `--tracks` | `jp,romaji` | Which karaoke tracks to write. |
 | `--snap` / `--no-snap` | on | Snap syllable starts to energy onsets. |
-| `--project PATH` | auto | Override the stem whose state file to use. |
-| `--model`, `--device` | | As phase1. |
+| `-o`, `--output-dir PATH` | inferred | Project directory; mainly useful for hand-made subtitles. |
+| `--model` | built-in | Set both timing and selection models. |
+| `--timing-model` | `--model` | Override the model used for rough/final timing. |
+| `--selection-model` | `--model` | Override the complete-line reading selector. Used for Japanese; romaji skips it. |
+| `--separate-audio`, `--device` | off, `cpu` | Separate the actual timing/selection source with Demucs. |
 
 ### find — anime name to a ready-to-run phase 1
 
@@ -339,7 +341,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 |---|---|---|
 | `--anime NAME` | required | Series name, e.g. `"Cross Fight B-Daman eS"`. |
 | `--video PATH` | — | The episode. **Optional**: without it this is a lookup only, since verifying a downloaded track means fingerprinting it against your episode. |
-| `-o`, `--out PATH` | `<video>.lines.ass` | Where phase 1 should write. |
+| `-o`, `--output-dir PATH` | `<video>.aksal` | Project directory passed to phase 1. |
 | `--op` / `--ed` | both | Consider only openings, or only endings. |
 | `--song-start TIME` | — | Narrows the verification search; passed through to phase 1. |
 | `--duration TIME` | `92` | As phase1. |
@@ -426,9 +428,9 @@ affects `--group word` only; syllable grouping, the default, is unaffected.
 
 ### Readings
 
-`<name>.readings.tsv`, beside the lines file, is an editable override table, keyed by **surface
-text, not line number**, so corrections survive splitting or reordering lines
-between phases.
+`readings.tsv`, beside `lines.ass`, is an editable override table. Its line id
+is carried in the ASS Effect field, so two identical lyric lines can safely use
+different readings; unique surfaces can still be matched after reordering.
 
 Fix anything flagged, and anything where the singer uses a non-standard reading.
 On one test song the analyser got **9 of 32 readings wrong**.
@@ -447,11 +449,12 @@ AKSAL: 永遠 could be えいえん or とわ; kept えいえん (margin 2.77, b
 The comments render nothing (libass ignores them) but travel with the file, so
 the alternatives are in front of you in Aegisub rather than in a log.
 
-The dictionary's reading is always the one used. `--audio-readings` lets the
-audio overrule it, but it is **experimental and off for a reason**: measured on
-real songs, every override it proposed was wrong, systematically swapping a
-correct kun'yomi for a rarer on'yomi. The alternatives are worth showing; the
-verdict is not yet worth trusting. See
+For Japanese lines, the selection model scores every complete-sentence reading
+hypothesis inside the line's audio window. It changes a word only when the
+result is likely; uncertain alternatives stay visible for review. Phase 2 uses
+the corrected line windows, saves its decisions in `selections.json`, and
+reuses them until the text, timing, audio, model, candidates, analyser, or
+scorer changes. A manual edit in `readings.tsv` always wins. See
 [docs/reading-arbitration.md](docs/reading-arbitration.md).
 
 ---

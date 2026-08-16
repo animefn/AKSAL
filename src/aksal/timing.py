@@ -56,7 +56,8 @@ class TimingSource:
 
 
 def from_video(project: "Project", first: float, last: float,
-               pad: float = 2.0) -> TimingSource:
+               pad: float = 2.0, device: str = "cpu", log=print
+               ) -> TimingSource:
     """Time against the video's own audio, over the span the lines cover.
 
     Decoding only that span matters: an acoustic model over a whole episode is
@@ -65,13 +66,31 @@ def from_video(project: "Project", first: float, last: float,
     """
     start = max(first - pad, 0.0)
     dur = max(last + pad - start, 0.1)
+    if project.video is None:
+        raise SystemExit("the project has no video to time against")
+    if project.separated:
+        from . import audio, separate
+
+        window = audio.extract_wav(
+            project.video, project.audio_dir / "timing-video-window.wav",
+            start, dur,
+        )
+        vocals = separate.separate(
+            window, project.audio_dir / "timing-video-vocals.wav",
+            device=device, log=log,
+        )
+        return TimingSource(
+            audio=vocals, name="video", start=None, dur=None, offset=start,
+            conditioned=True, cache_tag=f"video-vocals-{start:.3f}-{start + dur:.3f}",
+        )
     return TimingSource(audio=project.video, name="video",
                         start=start, dur=dur, offset=start,
                         conditioned=project.conditioned,
-                        cache_tag=f"video.{int(start)}-{int(start + dur)}")
+                        cache_tag=f"video-{start:.3f}-{start + dur:.3f}")
 
 
-def from_reference(project: "Project") -> TimingSource:
+def from_reference(project: "Project", device: str = "cpu", log=print
+                   ) -> TimingSource:
     """Time against the audio phase 1 aligned to, mapped by the splice offset.
 
     Only valid when the edit is a literal splice. With several chunks the offset
@@ -80,7 +99,20 @@ def from_reference(project: "Project") -> TimingSource:
     default for the common single-chunk case.
     """
     offset = project.segments[0].offset if project.segments else 0.0
-    return TimingSource(audio=project.align_audio, name="reference",
+    source = project.align_audio
+    if source is None:
+        raise SystemExit("the project has no reference alignment audio")
+    if project.separated and (source != project.vocals or not source.exists()):
+        from . import separate
+
+        if project.reference is None:
+            raise SystemExit("cannot separate reference timing without a reference")
+        target = (project.vocals if source == project.vocals
+                  else project.audio_dir / "timing-reference-vocals.wav")
+        source = separate.separate(
+            project.reference, target, device=device, log=log,
+        )
+    return TimingSource(audio=source, name="reference",
                         start=project.audio_start, dur=project.audio_dur,
                         offset=offset, conditioned=project.conditioned,
                         cache_tag="ref")

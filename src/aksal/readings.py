@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 import unicodedata
 from functools import lru_cache
 from pathlib import Path
@@ -18,8 +19,8 @@ import jaconv
 
 DIGITS = re.compile(r"[0-9０-９]")
 LATIN = re.compile(r"[A-Za-zＡ-Ｚａ-ｚ]")
-KANJI = re.compile(r"[一-鿿]")
-KANA_ONLY = re.compile(r"^[ぁ-ゖー\s]*$")
+KANJI_CHARS = "㐀-䶿一-鿿豈-﫿𠀀-𪛟々〆ヶ"
+KANJI = re.compile(f"[{KANJI_CHARS}]")
 
 _TAGGER = None
 _TAGGER_ARGS = ""
@@ -71,7 +72,7 @@ def tagger_args(dicdir: str | Path) -> str:
 # Furigana as lyric sheets print it: kanji, then a parenthesised all-kana gloss.
 # Deliberately narrow -- it fires only when the parenthetical is entirely kana
 # AND directly follows kanji, so ordinary asides ("(2回)", "(yeah)") survive.
-RUBY = re.compile(r"[一-鿿々]+[（(]([ぁ-ゖァ-ヺー]+)[）)]")
+RUBY = re.compile(f"[{KANJI_CHARS}]+[（(]([ぁ-ゖァ-ヺー]+)[）)]")
 
 
 def strip_ruby(line: str) -> str:
@@ -804,16 +805,24 @@ def resolve_words(surface: str, overrides: dict[str, str],
 
 def write_table(path: Path, rows: list[tuple[int, str, str, str]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="\n") as f:
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", newline="\n", dir=path.parent,
+        prefix=f".{path.name}-", suffix=".tmp", delete=False
+    ) as f:
         f.write("# line\tflag\tsurface\treading\n")
         f.write("# Fix the `reading` column wherever the flag column is set, and\n")
         f.write("# anywhere the analyser guessed a reading the singer does not use.\n")
-        f.write("# Readings must be hiragana. Rows are matched by SURFACE text,\n")
-        f.write("# so you may reorder or renumber freely.\n")
+        f.write("# Readings must be hiragana. The line id is carried in the ASS\n")
+        f.write("# Effect field, so repeated identical lines may differ safely.\n")
         f.write("# SPACES IN THE READING MARK WORD BREAKS. They set where the\n")
         f.write("# romaji karaoke puts its spaces; move one to re-split a word.\n")
         for n, flag, surface, reading in rows:
             f.write(f"{n}\t{flag}\t{surface}\t{reading}\n")
+        temporary = Path(f.name)
+    try:
+        temporary.replace(path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def detect_source(lyrics: Path) -> str:
@@ -844,8 +853,11 @@ def from_lyrics(lyrics: Path, overrides: dict[str, str] | None = None,
         surface = normalise_surface(raw)
         if not surface:
             continue
+        value = (overrides.get_for(i, surface)
+                 if hasattr(overrides, "get_for") else overrides.get(surface))
+        line_overrides = {surface: value} if value else {}
         rows.append((i, surface,
-                     " ".join(resolve_words(surface, overrides, source))))
+                     " ".join(resolve_words(surface, line_overrides, source))))
     return rows
 
 def units_and_romaji(surface: str, overrides: dict[str, str],

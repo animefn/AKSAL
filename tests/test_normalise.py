@@ -30,6 +30,12 @@ def test_combining_dakuten_is_composed():
     assert len(moras.split(composed)) == 1
 
 
+def test_extended_kanji_and_iteration_marks_are_detected():
+    assert readings.KANJI.search("㐂")
+    assert readings.KANJI.search("人々")
+    assert readings.strip_ruby("人々(ひとびと)") == "ひとびと"
+
+
 def test_fullwidth_latin_and_digits_are_folded():
     assert readings.normalise_surface("ｋｉｍｉ") == "kimi"
     assert readings.normalise_surface("１２３") == "123"

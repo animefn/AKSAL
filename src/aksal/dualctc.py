@@ -27,6 +27,8 @@ Model and vocabulary: github.com/nyosegawa/hiragana-asr (Apache-2.0).
 from __future__ import annotations
 
 from pathlib import Path
+import tempfile
+import hashlib
 
 import numpy as np
 import torch
@@ -124,7 +126,7 @@ def _cached_first(cls, model_id: str):
     """
     try:
         return cls.from_pretrained(model_id, local_files_only=True)
-    except Exception:                                # noqa: BLE001
+    except OSError:
         return cls.from_pretrained(model_id)
 
 
@@ -159,7 +161,7 @@ def load_into(aligner, spec: str | None = None, log=print) -> None:
     head = torch.nn.Linear(int(getattr(cfg, "hidden_size", 1024)), len(KANA) + 1)
 
     state = _find_state_dict(torch.load(path, map_location="cpu",
-                                        weights_only=False))
+                                        weights_only=True))
     enc_sd = {k[len("encoder."):]: v for k, v in state.items()
               if k.startswith("encoder.")}
     head_sd = {k[len("kana_head."):]: v for k, v in state.items()
@@ -187,6 +189,23 @@ def load_into(aligner, spec: str | None = None, log=print) -> None:
     aligner.vocab = {k: i + 1 for i, k in enumerate(KANA)}
     aligner.blank = BLANK_IDX
     aligner.output_key = None
+    stride = 1
+    for value in getattr(cfg, "conv_stride", []) or []:
+        stride *= int(value)
+    if stride != MODEL_STRIDE:
+        raise SystemExit(
+            f"the built-in model has an unexpected {stride}-sample frame "
+            f"stride; ASKAL requires {MODEL_STRIDE}. The base model and "
+            "checkpoint are incompatible.")
+    stat = path.stat()
+    config_hash = hashlib.sha256(
+        cfg.to_json_string().encode("utf-8")).hexdigest()
+    aligner.model_identity = (
+        f"dualctc:{REPO}/{CHECKPOINT}:{stat.st_size}:{stat.st_mtime_ns}:"
+        f"{config_hash}"
+    )
+    aligner.frame_stride = stride
+    aligner.output_size = len(KANA) + 1
     assert BLANK_IDX not in aligner.vocab.values()
 
 
@@ -199,8 +218,15 @@ def compute_emissions(aligner, y: np.ndarray,
     by recomputing an identical matrix on CPU.
     """
     if cache is not None and cache.exists():
-        aligner.log(f"  cached emissions: {cache.name}")
-        return torch.load(cache)
+        try:
+            cached = torch.load(cache, map_location="cpu", weights_only=True)
+            if (not isinstance(cached, torch.Tensor) or cached.ndim != 2
+                    or cached.shape[1] != aligner.output_size):
+                raise ValueError("wrong tensor shape")
+            aligner.log(f"  cached emissions: {cache.name}")
+            return cached
+        except (OSError, RuntimeError, ValueError, EOFError):
+            aligner.log(f"  ignoring invalid emissions cache: {cache.name}")
 
     win = int(WINDOW_SEC * SR)
     hop = int((WINDOW_SEC - OVERLAP_SEC) * SR)
@@ -225,6 +251,10 @@ def compute_emissions(aligner, y: np.ndarray,
                 hidden = aligner.model(inputs.input_values).last_hidden_state
                 logits = aligner.kana_head(hidden)[0]
         lp = torch.log_softmax(logits, dim=-1)
+        if lp.ndim != 2 or lp.shape[1] != aligner.output_size:
+            raise RuntimeError(
+                f"acoustic model emitted {tuple(lp.shape)} per chunk; "
+                f"expected (*, {aligner.output_size}) CTC logits")
 
         # Keep the frames furthest from a window seam, where the model had the
         # most context either side.
@@ -234,8 +264,19 @@ def compute_emissions(aligner, y: np.ndarray,
         aligner.log(f"\r    emissions {i + 1}/{len(starts)}", end="")
     aligner.log("")
 
+    if not pieces:
+        raise ValueError("audio is shorter than 0.5 seconds; cannot align it")
     out = torch.cat(pieces, dim=0)
     if cache is not None:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(out, cache)
+        with tempfile.NamedTemporaryFile(
+            dir=cache.parent, prefix=f".{cache.name}-", suffix=".tmp",
+            delete=False
+        ) as handle:
+            temporary = Path(handle.name)
+        try:
+            torch.save(out, temporary)
+            temporary.replace(cache)
+        finally:
+            temporary.unlink(missing_ok=True)
     return out

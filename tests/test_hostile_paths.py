@@ -44,30 +44,25 @@ def test_tagger_args_survive_every_hostile_character(hostile_dir):
     assert HOSTILE in args[4:-1]
 
 
-def test_project_stem_keeps_a_dotted_hostile_name(hostile_dir):
-    """`stem_of` must not treat `.lines` as a file extension to discard.
-
-    AKSAL's names carry several dots -- OP01.lines.ass -- which is exactly the
-    shape `Path.with_suffix` mangles, so this is checked rather than assumed.
-    """
-    lines = hostile_dir / "my song (1).lines.ass"
-    base = project_mod.stem_of(lines)
-    assert base.name == "my song (1)"
-    assert base.parent == hostile_dir
+def test_default_project_keeps_a_dotted_hostile_name(hostile_dir):
+    video = hostile_dir / "my song (1).final.mkv"
+    root = project_mod.default_output_dir(video)
+    assert root.name == "my song (1).final.aksal"
+    assert root.parent == hostile_dir
 
 
 def test_project_round_trips_through_a_hostile_path(hostile_dir):
     """Phase 2 finds its state by stamping the path into the ASS header."""
     from aksal import locate
 
-    base = hostile_dir / "my song (1)"
+    root = hostile_dir / "my song (1).aksal"
     proj = project_mod.Project(
-        base=base, video=hostile_dir / "ep (1).mkv", mode="video",
+        root=root, video=hostile_dir / "ep (1).mkv", mode="video",
         align_audio=hostile_dir / "ep (1).mkv", reference=None,
         segments=[locate.Segment(ref_start=0.0, ref_end=10.0, ep_start=0.0,
                                  ep_end=10.0, offset=0.0)])
     proj.save()
-    assert project_mod.Project.load(base).base == base
+    assert project_mod.Project.load(root).root == root.resolve()
 
 
 def test_ass_stamp_round_trips_a_hostile_path(hostile_dir):

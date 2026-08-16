@@ -31,6 +31,7 @@ def test_the_three_commands_exist():
     "--insert-romaji", "--lyrics-format", "--model", "--timing-model",
     "--selection-model", "--separate-audio",
     "--no-lrc-hints", "--lead-in", "-o",
+    "--output-dir",
 ])
 def test_phase1_keeps_its_documented_flags(flag):
     assert flag in flags("phase1")
@@ -39,7 +40,7 @@ def test_phase1_keeps_its_documented_flags(flag):
 @pytest.mark.parametrize("flag", ["--video", "--reference", "--group",
                                  "--tracks", "--model", "--timing-model",
                                  "--selection-model", "--separate-audio",
-                                 "--time-against"])
+                                 "--time-against", "--output-dir"])
 def test_phase2_keeps_its_documented_flags(flag):
     assert flag in flags("phase2")
 
@@ -51,7 +52,7 @@ def test_find_keeps_its_documented_flags(flag):
 
 
 @pytest.mark.parametrize("gone", ["--no-preprocess", "--search",
-                                  "--search-window"])
+                                  "--search-window", "--out", "--project"])
 def test_removed_flags_stay_removed(gone):
     """--no-preprocess became the default and was deleted rather than left as
     an inert alias; --search and --search-window said in a second vocabulary

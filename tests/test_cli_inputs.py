@@ -126,9 +126,17 @@ def test_cached_stem_needs_no_demucs(tmp_path, monkeypatch):
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr(builtins, "__import__", no_demucs)
+    source = tmp_path / "in.wav"
+    source.write_bytes(b"source")
     stem = tmp_path / "v.vocals.wav"
     stem.write_bytes(b"x")
-    got = separate.separate(tmp_path / "in.wav", stem, log=lambda *a: None)
+    from aksal import artifacts
+
+    identity = artifacts.derived_audio_identity(
+        source, operation=artifacts.SEPARATION_PIPELINE,
+        options={"model": separate.MODEL})
+    artifacts.atomic_write_json(stem.with_suffix(".wav.json"), identity)
+    got = separate.separate(source, stem, log=lambda *a: None)
     assert got == stem
 
 
@@ -145,6 +153,30 @@ def test_missing_demucs_says_what_to_do(tmp_path, monkeypatch):
         return real_import(name, *a, **kw)
 
     monkeypatch.setattr(builtins, "__import__", no_demucs)
+    source = tmp_path / "in.wav"
+    source.write_bytes(b"source")
     with pytest.raises(RuntimeError, match="pip install demucs"):
-        separate.separate(tmp_path / "in.wav", tmp_path / "out.wav",
+        separate.separate(source, tmp_path / "out.wav",
                           log=lambda *a: None)
+
+
+def test_stale_stem_is_not_reused(tmp_path, monkeypatch):
+    """A target name alone cannot prove which source Demucs processed."""
+    import builtins
+
+    from aksal import separate
+
+    source = tmp_path / "in.wav"
+    source.write_bytes(b"new source")
+    stem = tmp_path / "vocals.wav"
+    stem.write_bytes(b"old stem")
+    real_import = builtins.__import__
+
+    def no_demucs(name, *args, **kwargs):
+        if name.startswith("demucs"):
+            raise ImportError(name)
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", no_demucs)
+    with pytest.raises(RuntimeError, match="pip install demucs"):
+        separate.separate(source, stem, log=lambda *args: None)

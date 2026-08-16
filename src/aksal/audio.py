@@ -8,6 +8,7 @@ from __future__ import annotations
 from . import tools
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import numpy as np
@@ -42,10 +43,22 @@ def decode(path: Path, start: float | None = None, dur: float | None = None,
 def highpass(y: np.ndarray, cutoff: float = 80.0, sr: int = SR) -> np.ndarray:
     """Remove sub-bass. After source separation this is mostly bleed, and it
     contributes nothing the acoustic model can use."""
-    from scipy.signal import butter, sosfiltfilt
-
-    sos = butter(4, cutoff / (sr / 2), btype="highpass", output="sos")
-    return sosfiltfilt(sos, y).astype(np.float32)
+    if len(y) < 2 or cutoff <= 0:
+        return y.astype(np.float32, copy=False)
+    # A zero-phase fourth-order Butterworth response in the frequency domain.
+    # This replaces scipy's sosfiltfilt without adding another compiled runtime
+    # to the executable; the CTC model only needs the sub-bass removed, not a
+    # streaming filter with preserved phase state.
+    spectrum = np.fft.rfft(y)
+    frequencies = np.fft.rfftfreq(len(y), 1.0 / sr)
+    response = np.zeros_like(frequencies)
+    positive = frequencies > 0
+    # filtfilt applies the fourth-order response in both directions, so its
+    # zero-phase magnitude is the square of a one-pass Butterworth response.
+    response[positive] = 1.0 / (
+        1.0 + (cutoff / frequencies[positive]) ** 8
+    )
+    return np.fft.irfft(spectrum * response, n=len(y)).astype(np.float32)
 
 
 def normalize(y: np.ndarray, target_rms: float = 0.06) -> np.ndarray:
@@ -56,6 +69,8 @@ def normalize(y: np.ndarray, target_rms: float = 0.06) -> np.ndarray:
     same level and the model sees an inconsistent signal across window seams.
     Normalising once up front keeps the relative dynamics intact.
     """
+    if not y.size:
+        return y.astype(np.float32, copy=False)
     rms = float(np.sqrt(np.mean(np.square(y))))
     if rms < 1e-8:
         return y
@@ -75,6 +90,8 @@ def prepare(path: Path, start: float | None = None, dur: float | None = None,
     audio, most of it dialogue the aligner has no text for.
     """
     y = decode(path, start=start, dur=dur)
+    if not y.size:
+        raise RuntimeError(f"no decodable audio in {path}")
     if not condition:
         return y
     return normalize(highpass(y))
@@ -83,19 +100,39 @@ def prepare(path: Path, start: float | None = None, dur: float | None = None,
 def extract_wav(src: Path, dest: Path, start: float | None = None,
                 dur: float | None = None, sr: int = SR) -> Path:
     """Write a mono wav slice, for tools that need a file rather than an array."""
+    from . import artifacts
+
     dest.parent.mkdir(parents=True, exist_ok=True)
+    metadata = dest.with_suffix(dest.suffix + ".json")
+    identity = artifacts.derived_audio_identity(
+        src, operation="ffmpeg-wav-slice",
+        options={"start": start, "duration": dur, "sample_rate": sr},
+    )
+    if dest.exists() and artifacts.metadata_matches(metadata, identity):
+        return dest
+
+    with tempfile.NamedTemporaryFile(
+        dir=dest.parent, prefix=f".{dest.stem}-", suffix=dest.suffix,
+        delete=False
+    ) as handle:
+        temporary = Path(handle.name)
     cmd = [tools.ffmpeg(), "-v", "error", "-y"]
     if start is not None:
         cmd += ["-ss", f"{start:.3f}"]
     cmd += ["-i", str(src)]
     if dur is not None:
         cmd += ["-t", f"{dur:.3f}"]
-    cmd += ["-map", "0:a:0", "-ac", "1", "-ar", str(sr), str(dest)]
+    cmd += ["-map", "0:a:0", "-ac", "1", "-ar", str(sr), str(temporary)]
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if proc.returncode != 0:
-        raise RuntimeError(
-            f"ffmpeg failed slicing {src.name}:\n"
-            f"{proc.stderr.decode(errors='replace')}")
+    try:
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"ffmpeg failed slicing {src.name}:\n"
+                f"{proc.stderr.decode(errors='replace')}")
+        temporary.replace(dest)
+    finally:
+        temporary.unlink(missing_ok=True)
+    artifacts.atomic_write_json(metadata, identity)
     return dest
 
 
@@ -108,11 +145,15 @@ def envelope(y: np.ndarray, hop: int = 160, sr: int = SR) -> np.ndarray:
 
 def logspec(y: np.ndarray) -> np.ndarray:
     """Log-magnitude STFT, shape (freq_bins, frames)."""
-    from scipy.signal import stft
-
-    _, _, Z = stft(y, fs=SR, nperseg=N_FFT, noverlap=N_FFT - HOP,
-                   window="hann", boundary=None, padded=False)
-    return np.log1p(np.abs(Z).astype(np.float32) * 1000.0)
+    if len(y) < N_FFT:
+        return np.empty((N_FFT // 2 + 1, 0), dtype=np.float32)
+    frames = np.lib.stride_tricks.sliding_window_view(y, N_FFT)[::HOP]
+    # scipy.signal.stft used a periodic Hann and `scaling="spectrum"`; retain
+    # both details so removing SciPy does not change fingerprint thresholds.
+    window = np.hanning(N_FFT + 1)[:-1]
+    windowed = frames * window
+    spectrum = np.fft.rfft(windowed, axis=1) / window.sum()
+    return np.log1p(np.abs(spectrum).T.astype(np.float32) * 1000.0)
 
 
 def duration(path: Path) -> float | None:

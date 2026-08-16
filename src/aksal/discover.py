@@ -195,9 +195,10 @@ def _duration_of(path: Path) -> float | None:
         return None
 
 
-def phase1_command(found: Found, video: Path, out: Path,
+def phase1_command(found: Found, video: Path, output_dir: Path,
                    song_start: float | None) -> list[str]:
-    cmd = ["aksal", "phase1", "--video", str(video), "-o", str(out)]
+    cmd = ["aksal", "phase1", "--video", str(video),
+           "--output-dir", str(output_dir)]
     cmd += ["--lyrics", found.lyrics_url or "LYRICS.txt"]
     if found.reference is not None:
         cmd += ["--reference", str(found.reference)]
