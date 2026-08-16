@@ -20,10 +20,16 @@ the whole of ichiran's mechanism:
     scoring.py      calc-score's arithmetic, constants verbatim
     segmenter.py    the best-path search that weighs all of the above
 
-    analyse_words(text) -> [(surface, kana), ...]
+    analyse_words(text)      -> [(surface, kana), ...]
+    analyse_candidates(text) -> [(surface, [kana, ...]), ...]
+    word_readings(text)      -> [kana, ...]
 
-is the entry point, shaped to match `readings.analyse_words` so the rest of the
-pipeline neither knows nor cares which engine produced its readings.
+are the public entry points. `analyse_words` is shaped to match
+`readings.analyse_words` so the rest of the pipeline neither knows nor cares
+which engine produced its chosen reading. The other two preserve Ichiran's
+alternative-reading output: `word_readings` is the port of the Lisp
+`word-info-from-text` exact lookup, and `analyse_candidates` applies it to the
+words in a sentence.
 """
 from __future__ import annotations
 
@@ -35,7 +41,15 @@ import jaconv
 from . import numbers
 from .segmenter import Index, Segmenter
 
-__all__ = ["analyse_words", "available", "index_path", "load"]
+__all__ = [
+    "analyse_candidates",
+    "analyse_words",
+    "available",
+    "index_path",
+    "load",
+    "rivals",
+    "word_readings",
+]
 
 # The index ships with the package: 25 MB beside a 630 MB acoustic model is
 # not worth a download step, and shipping it means the tool works offline and
@@ -157,6 +171,83 @@ def _subdivide(seg, entry) -> list[tuple[str, str]] | None:
 # plausible enough to be worth a listen, so the floor here is far lower.
 RIVAL_FLOOR = 0.15
 MAX_RIVALS = 3
+
+# The bundled index deliberately carries less metadata than Ichiran's
+# PostgreSQL database. In particular, its integer commonness band slightly
+# overvalues some secondary readings: 度【たんび】 scores 11 against 16 for
+# 度【ど／たび】 here, while upstream Ichiran omits it from sentence output.
+# Three quarters reproduces upstream's visible choices for that case and also
+# removes 方【がた／さま／へ】 (5 against 16). Exhaustive dictionary lookup is
+# still available explicitly through `word_readings(..., exhaustive=True)`.
+WORD_READING_SCORE_FLOOR = 0.75
+
+
+def word_readings(surface: str, *, exhaustive: bool = False) -> list[str]:
+    """Contextually plausible readings for one exact spelling, best first.
+
+    This is the Python counterpart of Ichiran's Lisp `word-info-from-text`:
+    look up the complete surface directly and score every dictionary entry.
+    It is deliberately an EXACT lookup rather than a parse. A spelling such
+    as 度 is a grammatical suffix and therefore cannot begin a segmented
+    sentence, but asking for the readings of that exact spelling must still
+    return たび, ど, and the rarer たんび instead of an unexplained gap.
+
+    Sentence-facing output applies a score floor so rare suffix-only readings
+    are not presented as equal candidates for a bare word. Pass
+    `exhaustive=True` to enumerate every distinct reading in the index instead.
+    Callers that need a short nomination list for audio arbitration should use
+    `rivals`, whose separate floor and limit are intentional.
+
+    Distinct dictionary entries can share a reading, so kana are de-duplicated
+    after scoring.  Generated forms such as number+counter combinations are
+    handled by the sentence analyser and have no exact index rows here.
+    """
+    if not available() or not surface:
+        return []
+
+    from . import scoring
+
+    entries = load().index.by_surface.get(surface)
+    if not entries:
+        return []
+    scored = sorted(((scoring.calc_score(entry), entry)
+                     for entry in entries), key=lambda pair: -pair[0])
+    cutoff = (None if exhaustive
+              else scored[0][0] * WORD_READING_SCORE_FLOOR)
+    out: list[str] = []
+    for score, entry in scored:
+        if cutoff is not None and score < cutoff:
+            break
+        kana = jaconv.kata2hira(entry.reading or entry.surface)
+        if kana and kana not in out:
+            out.append(kana)
+    return out
+
+
+def analyse_candidates(text: str, *,
+                       exhaustive: bool = False) -> list[tuple[str, list[str]]]:
+    """Sentence words paired with every plausible exact reading.
+
+    Segmentation and reading enumeration are separate in the original Lisp
+    implementation.  `analyse_words` chooses the best path, while
+    `word-info-from-text` retains competing readings for each exact spelling.
+    Keeping that separation here avoids changing the long-standing
+    `(surface, chosen_kana)` contract of `analyse_words`.
+
+    The path's chosen reading is listed first when it exists.  For a known
+    suffix at the start of the input, where sentence grammar intentionally
+    leaves a gap, exact lookup supplies the candidates instead.
+    """
+    out: list[tuple[str, list[str]]] = []
+    for surface, chosen in analyse_words(text):
+        candidates = word_readings(surface, exhaustive=exhaustive)
+        if chosen:
+            candidates = [chosen] + [kana for kana in candidates
+                                     if kana != chosen]
+        if not candidates:
+            candidates = [chosen]
+        out.append((surface, candidates))
+    return out
 
 
 def rivals(surface: str, chosen: str, limit: int = MAX_RIVALS) -> list[str]:

@@ -11,7 +11,7 @@ these was found by a test rather than by reading output.
 """
 import pytest
 
-from aksal import readings
+from aksal import ichiran, readings
 
 pytestmark = pytest.mark.ichiran
 
@@ -43,6 +43,35 @@ def test_counters_keep_their_irregular_readings():
     assert reading_of("一度") == "いちど"
     assert reading_of("二度と") == "にどと"
     assert reading_of("三日") == "みっか"
+
+
+def test_exact_lookup_filters_sentence_candidates_but_can_be_exhaustive():
+    """Exact lookup is not sentence parsing.
+
+    度's JMdict entries are all tagged as suffixes, so sentence grammar quite
+    correctly refuses to put one at position zero.  Upstream Ichiran's
+    `word-info-from-text` bypasses that constraint when the caller asks what
+    this exact spelling can read as. Sentence-facing output follows Ichiran's
+    filtered presentation, while an explicit exhaustive lookup keeps genuine
+    rare readings too.
+    """
+    assert ichiran.word_readings("度") == ["たび", "ど"]
+    assert ichiran.word_readings("度", exhaustive=True) == [
+        "たび", "ど", "たんび",
+    ]
+    assert ichiran.analyse_candidates("度") == [
+        ("度", ["たび", "ど"]),
+    ]
+    assert ichiran.analyse_candidates("度", exhaustive=True) == [
+        ("度", ["たび", "ど", "たんび"]),
+    ]
+
+
+def test_context_only_suffix_readings_are_exhaustive_not_default_candidates():
+    assert ichiran.word_readings("方") == ["かた", "ほう"]
+    assert ichiran.word_readings("方", exhaustive=True) == [
+        "かた", "ほう", "がた", "さま", "へ",
+    ]
 
 
 # --- inflection ----------------------------------------------------------------

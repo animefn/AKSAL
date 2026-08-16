@@ -73,13 +73,16 @@ class Index:
         self.max_len = 1
 
     @classmethod
-    def load(cls, path: Path, max_entries_per_key: int = 8) -> "Index":
+    def load(cls, path: Path,
+             max_entries_per_key: int | None = None) -> "Index":
         """Read the built index.
 
         Several entries share a surface -- 夜 is よ and よる and や -- and all
         are kept, because choosing between them is the segmenter's job and the
-        audio's, not the loader's. The cap only stops a pathological key with
-        dozens of rare readings from crowding out the common ones.
+        audio's, not the loader's. Callers may request a cap for constrained
+        environments, but the default retains the complete index so exact-word
+        lookup can enumerate rare readings too. The segmenter performs its own
+        score culling before candidates enter the search.
         """
         idx = cls()
         with gzip.open(path, "rt", encoding="utf-8") as f:
@@ -97,7 +100,8 @@ class Index:
             # so absent (-1) has to sort last rather than first.
             bucket.sort(key=lambda e: (e.common if e.common >= 0 else 9999,
                                        e.ord))
-            del bucket[max_entries_per_key:]
+            if max_entries_per_key is not None:
+                del bucket[max_entries_per_key:]
         return idx
 
     def lookup(self, text: str, start: int) -> list[tuple[int, list[Entry]]]:
