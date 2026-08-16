@@ -149,6 +149,49 @@ def _subdivide(seg, entry) -> list[tuple[str, str]] | None:
     return out
 
 
+# NOMINATION IS NOT PARSE SELECTION, and conflating the two is what lost the
+# gikun. `cull_segments` keeps readings within HALF the best score, which is
+# right when choosing a parse and wrong when choosing what to ask the audio:
+# 永遠 scores 156 as えいえん and 65 as とわ, so the reading singers actually
+# use was dropped before anything could nominate it. A rival only has to be
+# plausible enough to be worth a listen, so the floor here is far lower.
+RIVAL_FLOOR = 0.15
+MAX_RIVALS = 3
+
+
+def rivals(surface: str, chosen: str, limit: int = MAX_RIVALS) -> list[str]:
+    """Other readings JMdict records for this exact surface, best first.
+
+    The audio decides between them; this only proposes. Returns [] for a
+    surface with one reading, which is the overwhelming majority.
+    """
+    if not available() or not surface:
+        return []
+    import jaconv as _jaconv
+
+    from . import scoring
+
+    seg = load()
+    entries = seg.index.by_surface.get(surface)
+    if not entries:
+        return []
+    scored = sorted(((scoring.calc_score(e), e) for e in entries),
+                    key=lambda pair: -pair[0])
+    if not scored or scored[0][0] <= 0:
+        return []
+    floor = scored[0][0] * RIVAL_FLOOR
+    out: list[str] = []
+    for score, entry in scored:
+        if score < floor:
+            break
+        kana = _jaconv.kata2hira(entry.reading or entry.surface)
+        if kana and kana != chosen and kana not in out:
+            out.append(kana)
+        if len(out) >= limit:
+            break
+    return out
+
+
 def analyse_words(text: str) -> list[tuple[str, str]]:
     """(surface, kana) per word, as `readings.analyse_words` returns.
 

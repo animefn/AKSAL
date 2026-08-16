@@ -44,6 +44,10 @@ class Event:
     end: float
     text: str
     style: str = "KARA-JP"
+    # A Comment line renders nothing but travels with the file, so a note about
+    # a line stays attached to it in Aegisub instead of living in a log the
+    # user closed. Used for readings the audio settled or could not settle.
+    comment: bool = False
 
     @property
     def plain(self) -> str:
@@ -98,7 +102,8 @@ def write(path: Path, events: list[Event], styles: list[str],
     info = f"{PROJECT_KEY} {project}\n" if project else ""
     body = [HEADER.format(styles="\n".join(styles), info=info)]
     for e in events:
-        body.append(f"Dialogue: 0,{ts(e.start)},{ts(e.end)},{e.style},,0,0,0,,{e.text}")
+        kind = "Comment" if getattr(e, "comment", False) else "Dialogue"
+        body.append(f"{kind}: 0,{ts(e.start)},{ts(e.end)},{e.style},,0,0,0,,{e.text}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(body) + "\n", encoding="utf-8")
 

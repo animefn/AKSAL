@@ -153,6 +153,7 @@ def resolve_media(spec: str | None, dest: Path, log=print) -> Path | None:
 
 def cmd_phase1(args) -> None:
     video: Path = args.video
+    audio_may_override = bool(getattr(args, "audio_readings", False))
     # Everything is a sibling of the output you asked for. No project directory,
     # nothing written to the tool's own folder.
     out_lines = args.out or Path.cwd() / f"{video.stem[:60]}.lines.ass"
@@ -415,10 +416,16 @@ def cmd_phase1(args) -> None:
         raise SystemExit("nothing landed inside the song window -- check "
                          "--song-start / --duration.")
 
-    ass.write(out_lines, events, [ass.STYLE_JP], project=base.resolve())
+    # Where each line's event landed, so a note about a reading can be given
+    # that line's own timing and sit beside it in Aegisub.
+    event_at = {e_line: e for e_line, e in
+                zip((g[0]["line"] for g in groups), events)}
 
     # Flag readings worth a human look, including any the audio disagrees with.
     table = []
+    decided_by_audio: list[tuple] = []
+    unclear: list[tuple] = []
+    notes: list[ass.Event] = []
     for line_no, surface, reading in rows:
         grp = next((g for g in groups if g[0]["line"] == line_no), None)
         flag = readings.flags_for(surface, reading, script)
@@ -426,28 +433,93 @@ def cmd_phase1(args) -> None:
             weak = sum(1 for c in grp if c["conf"] < 0.02)
             if len(grp) and weak / len(grp) > 0.7:
                 flag = ",".join(filter(None, [flag, "low-confidence"]))
-            # Readings a second engine disputes AND the audio decides against.
-            # Flagged, never changed: measured over six songs the audio picked
-            # the rival five times and was right four of them, so switching
-            # automatically would corrupt one correct reading to fix four.
+            # Words with more than one possible reading, settled by the audio.
+            # A CHOICE IS ALWAYS MADE: where the audio is decisive its pick
+            # replaces the dictionary's, and where it is not the dictionary's
+            # stands. Both outcomes are recorded, so neither happens silently.
             if script != "romaji":
                 pairs = readings.analyse_words(readings.normalise_surface(surface))
                 owner = [w for w, (_s, k) in enumerate(pairs) for _ in k]
-                for surf, ours_r, theirs, decided in aligner.disputed_readings(
-                        lp, grp, pairs, owner, readings.rival_reading):
-                    # Two different things, kept apart in the table. `reading?`
-                    # means the audio backed the other engine. `unclear?` means
-                    # the span was unreadable and NOTHING decided it -- worth a
-                    # glance precisely because the tool has no opinion. Both are
-                    # notes on a row; neither stops the run or asks anything.
-                    kind = "reading" if decided else "unclear"
-                    flag = ",".join(filter(
-                        None, [flag, f"{kind}?{surf}:{ours_r}/{theirs}"]))
+                for d in aligner.disputed_readings(
+                        lp, grp, pairs, owner, readings.candidate_readings):
+                    if d["verdict"] == "audio" and not audio_may_override:
+                        # MEASURED WRONG, SO NOT APPLIED BY DEFAULT. On real
+                        # songs every override the scoring proposed was an
+                        # error -- 君 kimi->kun, 胸 mune->muna, 涙 namida->nada
+                        # -- systematically swapping a correct kun'yomi for a
+                        # rare on'yomi. The candidates are still worth showing;
+                        # the verdict is not yet worth trusting. See
+                        # docs/reading-arbitration.md.
+                        d = {**d, "verdict": "unclear", "chosen": d["ours"]}
+                    if d["verdict"] == "audio":
+                        # Replaced in the reading so the choice TAKES EFFECT,
+                        # and announced -- a reading changing underneath the
+                        # user is exactly what must not happen quietly.
+                        reading = reading.replace(d["ours"], d["chosen"], 1)
+                        decided_by_audio.append(
+                            (line_no, d["surface"], d["ours"], d["chosen"],
+                             d["margin"]))
+                        flag = ",".join(filter(None, [
+                            flag,
+                            f"audio?{d['surface']}:{d['ours']}>{d['chosen']}"]))
+                    else:
+                        # Rivals exist and the audio could not separate them.
+                        # The dictionary's reading stands and the alternative
+                        # is named, so a human can settle it in one glance.
+                        unclear.append((line_no, d["surface"], d["ours"],
+                                        d["theirs"], d["margin"]))
+                        flag = ",".join(filter(None, [
+                            flag,
+                            f"unclear?{d['surface']}:{d['ours']}/{d['theirs']}"]))
         table.append((line_no, flag, surface, reading))
+
+    # One comment per note, on the line it belongs to. These render nothing --
+    # Aegisub shows them in the grid and libass ignores them -- so the karaoke
+    # is unchanged while the reasoning travels with the file.
+    for line_no, surf, was, now, margin in decided_by_audio:
+        ev = event_at.get(line_no)
+        if ev:
+            notes.append(ass.Event(
+                start=ev.start, end=ev.end, style=ev.style, comment=True,
+                text=f"AKSAL: audio chose {surf} = {now} (not {was}), "
+                     f"margin {margin}"))
+    for line_no, surf, ours_r, theirs, margin in unclear:
+        ev = event_at.get(line_no)
+        if ev:
+            notes.append(ass.Event(
+                start=ev.start, end=ev.end, style=ev.style, comment=True,
+                text=f"AKSAL: {surf} could be {ours_r} or {theirs}; kept "
+                     f"{ours_r} (margin {margin}, below the threshold)"))
+
+    ass.write(out_lines, events + notes, [ass.STYLE_JP],
+              project=base.resolve())
     readings.write_table(proj.readings_tsv, table)
 
     log(f"\nwrote {out_lines}   ({len(events)} lines)")
     log(f"wrote {proj.readings_tsv}")
+
+    # AMBIGUOUS READINGS ARE REPORTED, NEVER BURIED. A word like 心 is こころ
+    # or しん and the kanji does not say which; the audio does, when it can.
+    # Both outcomes are printed because both are things a human might overrule,
+    # and a changed reading changes the MORA COUNT and so the timing.
+    if decided_by_audio:
+        log(f"\nthe audio settled {len(decided_by_audio)} reading(s) "
+            f"against the dictionary:")
+        for line_no, surf, was, now, margin in decided_by_audio[:12]:
+            log(f"  line {line_no}: {surf}  {was} -> {now}  (margin {margin})")
+        if len(decided_by_audio) > 12:
+            log(f"  ... and {len(decided_by_audio) - 12} more")
+    if unclear:
+        log(f"\n{len(unclear)} reading(s) have a plausible alternative the "
+            f"audio could not settle -- the dictionary's choice was kept:")
+        for line_no, surf, ours_r, theirs, margin in unclear[:12]:
+            log(f"  line {line_no}: {surf}  {ours_r}  (or {theirs}?)"
+                f"  margin {margin}")
+        if len(unclear) > 12:
+            log(f"  ... and {len(unclear) - 12} more")
+    if decided_by_audio or unclear:
+        log(f"\n  all of these are marked in {proj.readings_tsv.name} and as "
+            f"comments in the ASS; correct any there and re-run.")
     if cut:
         log(f"\nlyric lines not present in this cut: "
             f"{', '.join(str(c) for c in cut)}")
@@ -862,6 +934,16 @@ def build_parser() -> argparse.ArgumentParser:
     pf.add_argument("--run", action="store_true",
                     help="run phase 1 immediately without asking")
     pf.set_defaults(func=cmd_find)
+
+    p1.add_argument("--audio-readings", action="store_true",
+                    help="let the audio OVERRULE the dictionary where a word "
+                         "has several possible readings (心 = kokoro or shin). "
+                         "Off by default and experimental: measured on real "
+                         "songs, every override it proposed was wrong, "
+                         "systematically swapping a correct kun'yomi for a "
+                         "rare on'yomi. Without it the alternatives are still "
+                         "listed in the readings table and as comments in the "
+                         "ASS, for you to settle.")
 
     for sp in (p1, p2):
         sp.add_argument("--analyser", "--analyzer", dest="analyser",

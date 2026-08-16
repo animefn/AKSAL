@@ -41,14 +41,19 @@ def test_agreement_is_not_a_dispute():
     assert readings.rival_reading("永遠", "えいえん") is None
 
 
-def test_unequal_mora_counts_never_nominate(monkeypatch):
-    """The filter that makes the whole idea viable.
+def test_unequal_mora_counts_do_nominate(monkeypatch):
+    """The filter that USED to make this viable, and now only breaks it.
 
-    Comparing candidates of different length against audio does not work: CTC
-    prefers the shorter sequence whatever was sung, because fewer tokens means
-    fewer constraints and blank frames are nearly free. Measured, equal-length
-    pairs score 88% while unequal ones are a coin flip or worse -- so an
-    unequal pair must never reach the audio, however plausible it looks.
+    An equal-mora-count requirement was correct while the scoring could not
+    compare candidates of different length -- the metric of the day picked the
+    shorter one 88-95% of the time whatever was sung. It also discarded every
+    dispute that matters: まだ/いまだ is 2 against 3, こころ/しん 3 against 2,
+    and this case, えいえん against とわ, 4 against 2.
+
+    `reading_score` no longer has that defect (it scores only the emitting
+    frames, so blank padding cannot be collected for free), so the gate is
+    gone and an unequal pair must reach the audio. See
+    docs/reading-arbitration.md.
     """
     class FakeRival:
         def convert(self, _surface):
@@ -56,7 +61,21 @@ def test_unequal_mora_counts_never_nominate(monkeypatch):
 
     monkeypatch.setattr(readings, "_RIVAL", FakeRival())
     monkeypatch.setattr(readings, "_RIVAL_TRIED", True)
-    assert readings.rival_reading("永遠", "えいえん") is None
+    assert readings.rival_reading("永遠", "えいえん") == "とわ"
+
+
+def test_a_split_rival_reading_is_joined_not_discarded(monkeypatch):
+    """ichiran emits coarser units than the rival engine, and bailing on a
+    split silently switched the whole arbiter off for every compound: 方が良い
+    is ONE match here and three segments there. The reading of the whole span
+    is what matters, so the pieces are joined."""
+    class FakeRival:
+        def convert(self, _surface):
+            return [{"kana": "カタ"}, {"kana": "ガ"}, {"kana": "ヨイ"}]
+
+    monkeypatch.setattr(readings, "_RIVAL", FakeRival())
+    monkeypatch.setattr(readings, "_RIVAL_TRIED", True)
+    assert readings.rival_reading("方が良い", "ほうがいい") == "かたがよい"
 
 
 def test_absent_second_engine_degrades_quietly(monkeypatch):

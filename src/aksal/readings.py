@@ -424,6 +424,47 @@ def _rival_analyser():
     return _RIVAL
 
 
+def candidate_readings(surface: str, ours: str) -> list[str]:
+    """Every reading worth putting to the audio for one word, best first.
+
+    TWO SOURCES, BECAUSE THEY FAIL DIFFERENTLY.
+
+    JMdict, through the ichiran index, is the primary one: it already holds
+    こころ AND しん for 心, まだ AND いまだ for 未だ, and -- the case no
+    morphological analyser has -- えいえん AND とわ for 永遠. We ship that
+    dictionary, so asking anything else what the alternatives *might* be was
+    always the wrong way round.
+
+    `pykakasi` stays as a second nominator because its dictionary lineage is
+    independent, so it disagrees in different places. It is a nominator only;
+    nothing it says is ever adopted without the audio agreeing.
+
+    THE OLD MORA-COUNT GATE IS GONE ON PURPOSE. It required both candidates to
+    have the same length, which silently discarded every case above -- まだ vs
+    いまだ is 2 against 3. It existed because the metric of the day could not
+    compare unequal lengths (see docs/reading-arbitration.md); the scoring no
+    longer has that defect, so the gate now only removes real work.
+    """
+    if not KANJI.search(surface) or surface in "をはへ":
+        # Kana spells its own reading, and を/は/へ are converted to their SUNG
+        # form here by design -- measured, that alone produced 15 of 16
+        # apparent disputes, and を and お are the same sound anyway.
+        return []
+
+    out: list[str] = []
+    try:
+        from . import ichiran
+
+        out.extend(ichiran.rivals(surface, ours))
+    except Exception:                            # pragma: no cover - optional
+        pass
+
+    theirs = rival_reading(surface, ours)
+    if theirs and theirs not in out:
+        out.append(theirs)
+    return out
+
+
 def rival_reading(surface: str, ours: str) -> str | None:
     """A second engine's reading for one word, when it is worth arbitrating.
 
@@ -436,14 +477,12 @@ def rival_reading(surface: str, ours: str) -> str | None:
         on purpose while pykakasi keeps the written one. Measured, that alone
         produced 15 of 16 apparent disputes, and since を and お are the same
         sound the audio cannot separate them anyway
-      * the two readings have the same mora count -- comparing different
-        lengths against audio does not work at all. CTC prefers the shorter
-        candidate whatever was sung, because fewer tokens means fewer
-        constraints and blank frames are nearly free. Equal-length pairs score
-        88%; unequal ones are a coin flip or worse.
+    The mora-count condition this function used to enforce has been REMOVED
+    from the arbitration path -- see `candidate_readings` and
+    docs/reading-arbitration.md. It survived here only as long as the scoring
+    could not compare candidates of different length; it now would discard the
+    disputes that matter most.
     """
-    from . import moras
-
     if not KANJI.search(surface) or surface in "をはへ":
         return None
     kks = _rival_analyser()
@@ -453,12 +492,13 @@ def rival_reading(surface: str, ours: str) -> str | None:
         segs = kks.convert(surface)
     except Exception:                       # pragma: no cover
         return None
-    if len(segs) != 1:
-        return None
-    theirs = jaconv.kata2hira(segs[0].get("kana") or "")
+    # THE SEGMENTS ARE JOINED, NOT REJECTED. This used to bail whenever the
+    # rival split the word, which quietly switched the whole arbiter off when
+    # the analyser moved to ichiran: ichiran emits coarser units (方が良い is
+    # ONE match), pykakasi splits them into three, and no nomination was ever
+    # made for any compound. What matters is the reading of the whole span.
+    theirs = jaconv.kata2hira("".join(s.get("kana") or "" for s in segs))
     if not theirs or theirs == ours:
-        return None
-    if len(moras.split(theirs)) != len(moras.split(ours)):
         return None
     return theirs
 
