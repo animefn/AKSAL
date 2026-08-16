@@ -430,9 +430,29 @@ affects `--group word` only; syllable grouping, the default, is unaffected.
 text, not line number**, so corrections survive splitting or reordering lines
 between phases.
 
-Fix anything flagged, and anything where the singer uses a non-standard reading —
-analysers do not know that 永遠 is often sung とわ. On one test song the analyser
-got **9 of 32 readings wrong**.
+Fix anything flagged, and anything where the singer uses a non-standard reading.
+On one test song the analyser got **9 of 32 readings wrong**.
+
+**Words with more than one possible reading are now listed rather than silently
+picked.** A kanji spelling does not determine its reading — 心 is *kokoro* or
+*shin*, 未だ is *mada* or *imada*, 方 is *hou* or *kata*, and 永遠 is often sung
+*towa* — and the choice changes the mora count, so it changes the timing of the
+whole line. Where the dictionary knows an alternative, it appears in the
+readings table and as a comment line on that line in the ASS:
+
+```
+AKSAL: 永遠 could be えいえん or とわ; kept えいえん (margin 2.77, below the threshold)
+```
+
+The comments render nothing (libass ignores them) but travel with the file, so
+the alternatives are in front of you in Aegisub rather than in a log.
+
+The dictionary's reading is always the one used. `--audio-readings` lets the
+audio overrule it, but it is **experimental and off for a reason**: measured on
+real songs, every override it proposed was wrong, systematically swapping a
+correct kun'yomi for a rarer on'yomi. The alternatives are worth showing; the
+verdict is not yet worth trusting. See
+[docs/reading-arbitration.md](docs/reading-arbitration.md).
 
 ---
 
