@@ -16,9 +16,11 @@ import sys
 from pathlib import Path
 
 from . import align as A
-from . import ass, locate, lyrics as lyrics_mod, moras, readings, romaji, separate
+from . import (ass, locate, lyrics as lyrics_mod, moras, reading_selector,
+               readings, romaji, separate)
 from . import timing
 from . import audio as audio_mod
+from . import model_spec
 from .audio import envelope, prepare
 from . import project as project_mod
 from .project import Project
@@ -153,7 +155,8 @@ def resolve_media(spec: str | None, dest: Path, log=print) -> Path | None:
 
 def cmd_phase1(args) -> None:
     video: Path = args.video
-    audio_may_override = bool(getattr(args, "audio_readings", False))
+    timing_model, selection_model = model_spec.resolve(
+        args.model, args.timing_model, args.selection_model)
     # Everything is a sibling of the output you asked for. No project directory,
     # nothing written to the tool's own folder.
     out_lines = args.out or Path.cwd() / f"{video.stem[:60]}.lines.ass"
@@ -168,6 +171,8 @@ def cmd_phase1(args) -> None:
     window: tuple[float, float] | None = None   # slice of source to decode
     log(f"output  : {base}.*")
     log(f"mode    : {mode}")
+    log(f"timing model   : {timing_model}")
+    log(f"selection model: {selection_model}")
 
     # --- 1. decide what audio we align against, and how it maps to the video --
     if mode == "reference":
@@ -260,7 +265,9 @@ def cmd_phase1(args) -> None:
     proj = Project(base=base, video=video,
                    mode=mode, align_audio=align_source,
                    reference=reference, segments=segments,
-                   model=args.model, conditioned=bool(args.separate_vocals))
+                   model=args.model or "", timing_model=timing_model,
+                   selection_model=selection_model,
+                   conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
@@ -293,7 +300,7 @@ def cmd_phase1(args) -> None:
 
     # --- 4. align ------------------------------------------------------------
     log("\nalignment")
-    aligner = A.Aligner(args.model, log=log)
+    aligner = A.Aligner(timing_model, log=log)
     y = prepare(align_source, proj.audio_start, proj.audio_dur,
                 condition=proj.conditioned)
     lp = aligner.emissions(y, cache=proj.emissions_cache)
@@ -360,7 +367,86 @@ def cmd_phase1(args) -> None:
         log(f"  ended {trimmed} line(s) at their last syllable rather than at "
             "the next line")
 
-    # --- 5. map to the video timeline and write ------------------------------
+    # --- 5. settle ambiguous readings over complete line audio --------------
+    selections: dict[int, reading_selector.LineSelection] = {}
+    selection_errors: dict[int, str] = {}
+    group_of = {g[0]["line"]: g for g in groups if g}
+    plans = []
+    if script != "romaji":
+        for line_no, surface, _reading in rows:
+            key = readings.normalise_surface(surface)
+            if key in overrides:          # a human correction outranks audio
+                continue
+            words = readings.analyse_words(key)
+            choices = reading_selector.candidate_choices(
+                words, readings.candidate_readings)
+            if not any(len(choice) > 1 for choice in choices):
+                continue
+            grp = group_of.get(line_no)
+            placed = [c for c in (grp or []) if c.get("start") is not None]
+            if not placed:
+                selection_errors[line_no] = "no rough line timing"
+                continue
+            start = anchors.get(line_no, placed[0]["start"])
+            end = placed[-1].get("end") or (placed[-1]["start"] + 0.25)
+            if end <= start:
+                selection_errors[line_no] = "rough line interval is empty"
+                continue
+            plans.append((line_no, words, choices, start, end))
+
+    if plans:
+        log(f"\nreading selection ({len(plans)} ambiguous line(s))")
+        if selection_model == timing_model:
+            selector = aligner
+            selection_lp = lp
+        else:
+            # Rough timing is complete. Release its large tensor and model
+            # before loading a different selector checkpoint.
+            del lp
+            import gc
+
+            del aligner
+            gc.collect()
+            selector = A.Aligner(selection_model, log=log)
+            selection_lp = None
+
+        for line_no, words, choices, start, end in plans:
+            try:
+                if selection_lp is not None:
+                    f0 = max(int(start / A.SEC_PER_FRAME), 0)
+                    f1 = min(int(end / A.SEC_PER_FRAME) + 1,
+                             selection_lp.shape[0])
+                    line_lp = selection_lp[f0:f1]
+                else:
+                    s0 = max(int(start * audio_mod.SR), 0)
+                    s1 = min(int(end * audio_mod.SR), len(y))
+                    if s1 - s0 < audio_mod.SR // 2:
+                        raise reading_selector.SelectionError(
+                            "rough line interval is too short")
+                    line_lp = selector.emissions(y[s0:s1])
+                selections[line_no] = reading_selector.select(
+                    words, selector, line_lp, readings.candidate_readings,
+                    choices=choices)
+            except reading_selector.SelectionError as exc:
+                selection_errors[line_no] = str(exc)
+                continue
+
+        rows = [
+            (line_no, surface,
+             selections[line_no].reading if line_no in selections else reading)
+            for line_no, surface, reading in rows
+        ]
+    else:
+        del lp
+
+    # Selected readings must feed the romaji hints and phase-2 table exactly as
+    # manual readings do. This local map does not mutate the user's old table.
+    effective_overrides = dict(overrides)
+    for line_no, surface, reading in rows:
+        if line_no in selections:
+            effective_overrides[readings.normalise_surface(surface)] = reading
+
+    # --- 6. map to the video timeline and write ------------------------------
     surface_of = {n: s for n, s, _ in rows}
 
     # Romaji hints for the timer. This tool is for karaoke timers, who often
@@ -372,11 +458,12 @@ def cmd_phase1(args) -> None:
     if args.insert_romaji:
         for line_no, surface, _reading in rows:
             units, owner, cells = readings.units_and_romaji(
-                surface, overrides, script)
+                surface, effective_overrides, script)
             romaji_of[line_no] = "".join(cells)
         log(f"  romaji hints on {len(romaji_of)} line(s)")
 
     events, cut, straddled = [], [], []
+    event_at: dict[int, ass.Event] = {}
     anchored = 0
     for grp in groups:
         placed = [c for c in grp if c["start"] is not None
@@ -406,20 +493,17 @@ def cmd_phase1(args) -> None:
         seg = next(s for s in proj.segments if s.contains_ref(ref_start))
         end = min(placed[-1]["end"], seg.ref_end) + seg.offset
         line_no = grp[0]["line"]
-        events.append(ass.Event(
+        event = ass.Event(
             start=start - args.lead_in,
             end=max(end, start + 0.4) - args.lead_in,
             text=romaji.annotate(surface_of[line_no], romaji_of.get(line_no, "")),
-            style="KARA-JP"))
+            style="KARA-JP")
+        events.append(event)
+        event_at[line_no] = event
 
     if not events:
         raise SystemExit("nothing landed inside the song window -- check "
                          "--song-start / --duration.")
-
-    # Where each line's event landed, so a note about a reading can be given
-    # that line's own timing and sit beside it in Aegisub.
-    event_at = {e_line: e for e_line, e in
-                zip((g[0]["line"] for g in groups), events)}
 
     # Flag readings worth a human look, including any the audio disagrees with.
     table = []
@@ -433,63 +517,46 @@ def cmd_phase1(args) -> None:
             weak = sum(1 for c in grp if c["conf"] < 0.02)
             if len(grp) and weak / len(grp) > 0.7:
                 flag = ",".join(filter(None, [flag, "low-confidence"]))
-            # Words with more than one possible reading, settled by the audio.
-            # A CHOICE IS ALWAYS MADE: where the audio is decisive its pick
-            # replaces the dictionary's, and where it is not the dictionary's
-            # stands. Both outcomes are recorded, so neither happens silently.
-            if script != "romaji":
-                pairs = readings.analyse_words(readings.normalise_surface(surface))
-                owner = [w for w, (_s, k) in enumerate(pairs) for _ in k]
-                for d in aligner.disputed_readings(
-                        lp, grp, pairs, owner, readings.candidate_readings):
-                    if d["verdict"] == "audio" and not audio_may_override:
-                        # MEASURED WRONG, SO NOT APPLIED BY DEFAULT. On real
-                        # songs every override the scoring proposed was an
-                        # error -- 君 kimi->kun, 胸 mune->muna, 涙 namida->nada
-                        # -- systematically swapping a correct kun'yomi for a
-                        # rare on'yomi. The candidates are still worth showing;
-                        # the verdict is not yet worth trusting. See
-                        # docs/reading-arbitration.md.
-                        d = {**d, "verdict": "unclear", "chosen": d["ours"]}
-                    if d["verdict"] == "audio":
-                        # Replaced in the reading so the choice TAKES EFFECT,
-                        # and announced -- a reading changing underneath the
-                        # user is exactly what must not happen quietly.
-                        reading = reading.replace(d["ours"], d["chosen"], 1)
-                        decided_by_audio.append(
-                            (line_no, d["surface"], d["ours"], d["chosen"],
-                             d["margin"]))
-                        flag = ",".join(filter(None, [
-                            flag,
-                            f"audio?{d['surface']}:{d['ours']}>{d['chosen']}"]))
-                    else:
-                        # Rivals exist and the audio could not separate them.
-                        # The dictionary's reading stands and the alternative
-                        # is named, so a human can settle it in one glance.
-                        unclear.append((line_no, d["surface"], d["ours"],
-                                        d["theirs"], d["margin"]))
-                        flag = ",".join(filter(None, [
-                            flag,
-                            f"unclear?{d['surface']}:{d['ours']}/{d['theirs']}"]))
+        if line_no in selection_errors:
+            flag = ",".join(filter(None, [flag, "selection-error"]))
+        selected = selections.get(line_no)
+        for decision in selected.decisions if selected else ():
+            _top_reading, top_probability = decision.ranked[0]
+            alternatives = "/".join(r for r, _p in decision.ranked)
+            if decision.changed:
+                decided_by_audio.append(
+                    (line_no, decision.surface, decision.current,
+                     decision.chosen, top_probability, decision.confidence))
+                flag = ",".join(filter(None, [
+                    flag,
+                    f"audio?{decision.surface}:"
+                    f"{decision.current}>{decision.chosen}"]))
+            elif decision.confidence == "uncertain":
+                unclear.append(
+                    (line_no, decision.surface, decision.current,
+                     alternatives, top_probability))
+                flag = ",".join(filter(None, [
+                    flag,
+                    f"unclear?{decision.surface}:{alternatives}"]))
         table.append((line_no, flag, surface, reading))
 
     # One comment per note, on the line it belongs to. These render nothing --
     # Aegisub shows them in the grid and libass ignores them -- so the karaoke
     # is unchanged while the reasoning travels with the file.
-    for line_no, surf, was, now, margin in decided_by_audio:
+    for line_no, surf, was, now, probability, certainty in decided_by_audio:
         ev = event_at.get(line_no)
         if ev:
             notes.append(ass.Event(
                 start=ev.start, end=ev.end, style=ev.style, comment=True,
                 text=f"AKSAL: audio chose {surf} = {now} (not {was}), "
-                     f"margin {margin}"))
-    for line_no, surf, ours_r, theirs, margin in unclear:
+                     f"{probability:.1%}, {certainty}"))
+    for line_no, surf, ours_r, alternatives, probability in unclear:
         ev = event_at.get(line_no)
         if ev:
             notes.append(ass.Event(
                 start=ev.start, end=ev.end, style=ev.style, comment=True,
-                text=f"AKSAL: {surf} could be {ours_r} or {theirs}; kept "
-                     f"{ours_r} (margin {margin}, below the threshold)"))
+                text=f"AKSAL: {surf} candidates {alternatives}; kept "
+                     f"{ours_r} (top {probability:.1%}, uncertain)"))
 
     ass.write(out_lines, events + notes, [ass.STYLE_JP],
               project=base.resolve())
@@ -505,21 +572,27 @@ def cmd_phase1(args) -> None:
     if decided_by_audio:
         log(f"\nthe audio settled {len(decided_by_audio)} reading(s) "
             f"against the dictionary:")
-        for line_no, surf, was, now, margin in decided_by_audio[:12]:
-            log(f"  line {line_no}: {surf}  {was} -> {now}  (margin {margin})")
+        for line_no, surf, was, now, probability, certainty in decided_by_audio[:12]:
+            log(f"  line {line_no}: {surf}  {was} -> {now}  "
+                f"({probability:.1%}, {certainty})")
         if len(decided_by_audio) > 12:
             log(f"  ... and {len(decided_by_audio) - 12} more")
     if unclear:
         log(f"\n{len(unclear)} reading(s) have a plausible alternative the "
             f"audio could not settle -- the dictionary's choice was kept:")
-        for line_no, surf, ours_r, theirs, margin in unclear[:12]:
-            log(f"  line {line_no}: {surf}  {ours_r}  (or {theirs}?)"
-                f"  margin {margin}")
+        for line_no, surf, ours_r, alternatives, probability in unclear[:12]:
+            log(f"  line {line_no}: {surf}  kept {ours_r}; "
+                f"candidates {alternatives}  (top {probability:.1%})")
         if len(unclear) > 12:
             log(f"  ... and {len(unclear) - 12} more")
     if decided_by_audio or unclear:
         log(f"\n  all of these are marked in {proj.readings_tsv.name} and as "
             f"comments in the ASS; correct any there and re-run.")
+    if selection_errors:
+        log(f"\n{len(selection_errors)} ambiguous line(s) could not be "
+            "scored and kept their existing readings:")
+        for line_no, reason in list(selection_errors.items())[:12]:
+            log(f"  line {line_no}: {reason}")
     if cut:
         log(f"\nlyric lines not present in this cut: "
             f"{', '.join(str(c) for c in cut)}")
@@ -621,10 +694,14 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
             source, base.parent / (base.name + ".vocals.wav"),
             device=args.device, log=log)
 
+    timing_model, selection_model = model_spec.resolve(
+        args.model, args.timing_model, args.selection_model)
     proj = Project(base=base, video=args.video,
                    mode="reference" if reference else "video",
                    align_audio=align_source, reference=reference,
-                   segments=segments, model=args.model,
+                   segments=segments, model=args.model or "",
+                   timing_model=timing_model,
+                   selection_model=selection_model,
                    conditioned=bool(args.separate_vocals))
     proj.audio_start, proj.audio_dur = a_start, a_dur
     proj.save()
@@ -661,6 +738,16 @@ def cmd_phase2(args) -> None:
                 f"    aksal phase2 {lines_file} --video EPISODE.mkv")
         proj.audio_start = proj.audio_dur = None
 
+    # Command-line role flags override saved project choices. The general
+    # --model applies to both roles; a role-specific flag wins over it.
+    if args.model:
+        proj.timing_model = args.model
+        proj.selection_model = args.model
+    if args.timing_model:
+        proj.timing_model = args.timing_model
+    if args.selection_model:
+        proj.selection_model = args.selection_model
+
     log(f"\nproject : {proj.name}  ({proj.mode} mode)")
     log(f"lines   : {lines_file}   {len(events)} line(s)")
 
@@ -688,9 +775,10 @@ def cmd_phase2(args) -> None:
         src = timing.from_reference(proj)
     log(f"  timing against {src.describe()}")
 
-    aligner = A.Aligner(proj.model or None, log=log)
+    aligner = A.Aligner(proj.timing_model, log=log)
     y = prepare(src.audio, src.start, src.dur, condition=src.conditioned)
-    lp = aligner.emissions(y, cache=proj.sibling(f".emissions.{src.cache_tag}.pt"))
+    lp = aligner.emissions(
+        y, cache=proj.emissions_cache_for(src.cache_tag, proj.timing_model))
     env = envelope(y)
 
     jp_events: list[ass.Event] = []
@@ -935,16 +1023,6 @@ def build_parser() -> argparse.ArgumentParser:
                     help="run phase 1 immediately without asking")
     pf.set_defaults(func=cmd_find)
 
-    p1.add_argument("--audio-readings", action="store_true",
-                    help="let the audio OVERRULE the dictionary where a word "
-                         "has several possible readings (心 = kokoro or shin). "
-                         "Off by default and experimental: measured on real "
-                         "songs, every override it proposed was wrong, "
-                         "systematically swapping a correct kun'yomi for a "
-                         "rare on'yomi. Without it the alternatives are still "
-                         "listed in the readings table and as comments in the "
-                         "ASS, for you to settle.")
-
     for sp in (p1, p2):
         sp.add_argument("--analyser", "--analyzer", dest="analyser",
                         choices=readings.ENGINES, default="ichiran",
@@ -957,8 +1035,12 @@ def build_parser() -> argparse.ArgumentParser:
                              "Either way, anything the dictionary does not "
                              "cover falls back to unidic.")
         sp.add_argument("--model", default=None,
-                        help="override the acoustic model, e.g. "
-                             "hiragana-asr:D:/models/custom.pt")
+                        help="set both timing and reading-selection acoustic "
+                             "models to this Hugging Face ID or local model")
+        sp.add_argument("--timing-model", default=None,
+                        help="override --model for timing only")
+        sp.add_argument("--selection-model", default=None,
+                        help="override --model for reading selection only")
         sp.add_argument("--device", default="cpu", help="demucs device")
         sp.add_argument("--separate-audio", dest="separate_vocals",
                         action="store_true",

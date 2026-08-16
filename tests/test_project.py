@@ -86,6 +86,12 @@ def test_cache_name_encodes_conditioning():
     assert "raw" in b.name
 
 
+def test_cache_name_encodes_the_timing_model():
+    a = make(timing_model="model-a").emissions_cache
+    b = make(timing_model="model-b").emissions_cache
+    assert a != b
+
+
 # --- persistence --------------------------------------------------------------
 
 def test_round_trip(tmp_path):
@@ -96,10 +102,21 @@ def test_round_trip(tmp_path):
     q = Project.load(tmp_path / "OP01")
     assert q.mode == p.mode
     assert q.model == "m"
+    assert q.timing_model == "m"
+    assert q.selection_model == "m"
     assert q.lyrics_source == "romaji"
     assert q.conditioned is False
     assert len(q.segments) == 1
     assert q.segments[0].offset == pytest.approx(36.0)
+
+
+def test_two_model_roles_round_trip(tmp_path):
+    p = make(base=str(tmp_path / "OP01"), timing_model="timing/id",
+             selection_model="selection/id")
+    p.save()
+    q = Project.load(tmp_path / "OP01")
+    assert q.timing_model == "timing/id"
+    assert q.selection_model == "selection/id"
 
 
 def test_state_file_sits_next_to_the_output(tmp_path):

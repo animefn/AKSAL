@@ -72,7 +72,9 @@ def checkpoint_path(spec: str | None, log=print) -> Path:
     `hiragana-asr:` downloads the published weights and caches them;
     `hiragana-asr:/path/to.pt` uses a local file instead.
     """
-    spec = spec or DEFAULT_SPEC
+    from .model_spec import DEFAULT_MODEL
+
+    spec = DEFAULT_SPEC if not spec or spec == DEFAULT_MODEL else spec
     rest = str(spec)[len(SPEC_PREFIX):].strip() if str(spec).startswith(SPEC_PREFIX) \
         else str(spec).strip()
     if rest:
@@ -184,6 +186,7 @@ def load_into(aligner, spec: str | None = None, log=print) -> None:
     # asserted rather than assumed.
     aligner.vocab = {k: i + 1 for i, k in enumerate(KANA)}
     aligner.blank = BLANK_IDX
+    aligner.output_key = None
     assert BLANK_IDX not in aligner.vocab.values()
 
 
@@ -213,9 +216,11 @@ def compute_emissions(aligner, y: np.ndarray,
                                    return_tensors="pt", padding=False)
         with torch.inference_mode():
             if getattr(aligner, "kana_head", None) is None:
-                # A stock Hugging Face CTC model emits logits directly; the
-                # dual-CTC checkpoint is an encoder plus a separate kana head.
-                logits = aligner.model(inputs.input_values).logits[0]
+                # Stock Hugging Face CTC models expose `.logits`; the custom
+                # dual-CTC AutoModels expose a named kana head instead.
+                output = aligner.model(inputs.input_values)
+                key = getattr(aligner, "output_key", None)
+                logits = (output[key] if key else output.logits)[0]
             else:
                 hidden = aligner.model(inputs.input_values).last_hidden_state
                 logits = aligner.kana_head(hidden)[0]

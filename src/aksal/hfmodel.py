@@ -23,6 +23,25 @@ KANA_RANGE = ("ぁ", "ヿ")      # hiragana + katakana
 MIN_KANA_SHARE = 0.5
 
 
+def _cached_first(cls, model_id: str, **kwargs):
+    """Load without touching the network when the checkpoint is cached."""
+    try:
+        return cls.from_pretrained(model_id, local_files_only=True, **kwargs)
+    except Exception:                                # noqa: BLE001
+        return cls.from_pretrained(model_id, **kwargs)
+
+
+def _config_dict(model_id: str) -> dict:
+    from transformers.configuration_utils import PretrainedConfig
+
+    try:
+        got, _ = PretrainedConfig.get_config_dict(
+            model_id, local_files_only=True)
+    except Exception:                                # noqa: BLE001
+        got, _ = PretrainedConfig.get_config_dict(model_id)
+    return got
+
+
 def looks_like_kana_vocab(vocab: dict[str, int]) -> tuple[bool, float]:
     """Is this a kana model? Returns (verdict, share of single-kana tokens)."""
     singles = [t for t in vocab if len(t) == 1]
@@ -37,10 +56,10 @@ def load_into(aligner, model_id: str, log=print) -> None:
     """Load a Hugging Face CTC model and attach it to `aligner`."""
     import warnings
 
-    from transformers import (Wav2Vec2Config, Wav2Vec2ForCTC,
+    from transformers import (AutoFeatureExtractor, AutoModel,
+                              PreTrainedTokenizerFast, Wav2Vec2Config,
+                              Wav2Vec2FeatureExtractor, Wav2Vec2ForCTC,
                               Wav2Vec2Processor)
-    from transformers.configuration_utils import PretrainedConfig
-
     log(f"  acoustic model: {model_id}")
 
     # Checkpoints uploaded years ago bake `gradient_checkpointing` into their
@@ -49,14 +68,39 @@ def load_into(aligner, model_id: str, log=print) -> None:
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message=".*gradient_checkpointing.*",
                                 category=UserWarning)
-        processor = Wav2Vec2Processor.from_pretrained(model_id)
-        cfg_dict, _ = PretrainedConfig.get_config_dict(model_id)
-        cfg_dict.pop("gradient_checkpointing", None)
-        model = Wav2Vec2ForCTC.from_pretrained(model_id,
-                                               config=Wav2Vec2Config(**cfg_dict))
+        cfg_dict = _config_dict(model_id)
+        if cfg_dict.get("model_type") == "dual_ctc":
+            try:
+                processor = _cached_first(AutoFeatureExtractor, model_id)
+            except OSError:
+                # DistilHuBERT's dual-CTC repository intentionally contains no
+                # preprocessor config. Its reference scorer uses ordinary
+                # Wav2Vec2 zero-mean/unit-variance waveform normalisation.
+                processor = Wav2Vec2FeatureExtractor(
+                    feature_size=1,
+                    sampling_rate=16_000,
+                    padding_value=0.0,
+                    do_normalize=True,
+                    return_attention_mask=False,
+                )
+                log("    no feature extractor in the repository; using "
+                    "16 kHz Wav2Vec2 normalisation")
+            tokenizer = _cached_first(
+                PreTrainedTokenizerFast, model_id, subfolder="kana_tokenizer")
+            model = _cached_first(
+                AutoModel, model_id, trust_remote_code=True)
+            output_key = "kana_logits"
+        else:
+            processor = _cached_first(Wav2Vec2Processor, model_id)
+            tokenizer = processor.tokenizer
+            cfg_dict.pop("gradient_checkpointing", None)
+            model = _cached_first(
+                Wav2Vec2ForCTC, model_id,
+                config=Wav2Vec2Config(**cfg_dict))
+            output_key = None
     model.eval()
 
-    vocab = processor.tokenizer.get_vocab()
+    vocab = tokenizer.get_vocab()
     ok, share = looks_like_kana_vocab(vocab)
     if not ok:
         raise SystemExit(
@@ -67,7 +111,7 @@ def load_into(aligner, model_id: str, log=print) -> None:
             "  and give no sign that it has: the output looks completely\n"
             "  ordinary and every timestamp is wrong.")
 
-    blank = processor.tokenizer.pad_token_id
+    blank = tokenizer.pad_token_id
     if blank is None:
         for name in ("<pad>", "[PAD]", "<blank>", "<ctc_blank>"):
             if name in vocab:
@@ -91,5 +135,6 @@ def load_into(aligner, model_id: str, log=print) -> None:
     aligner.kana_head = None          # logits come straight from the model
     aligner.vocab = vocab
     aligner.blank = blank
+    aligner.output_key = output_key
     aligner.log = log
     log(f"    {len(vocab)} tokens, {share:.0%} kana, blank at {blank}")

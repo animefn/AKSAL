@@ -29,39 +29,6 @@ OVERLAP_SEC = 2.0
 MODEL_STRIDE = 320             # wav2vec2 downsamples 16 kHz by 320 -> 20 ms/frame
 SEC_PER_FRAME = MODEL_STRIDE / SR
 
-# Below this mean confidence a span carries no usable evidence, and comparing
-# two candidates over it returns whichever won by noise. Ordinary aligned
-# syllables run a median of 0.085 and a p10 of 0.0031, so this sits an order of
-# magnitude under anything legible. See `Aligner.disputed_readings`.
-MIN_EVIDENCE = 0.001
-
-# The same idea as MIN_EVIDENCE, in the units `reading_score` actually works
-# in -- and NOT a conversion of it. Converting log(0.001) = -6.9 was wrong by
-# construction: MIN_EVIDENCE is a mean PROBABILITY per mora, while this is a
-# mean LOG-probability per emitting frame, which is a different quantity on a
-# different scale. Measured over 822 ordinary words, `reading_score` runs a
-# median of -6.2 -- so a floor at -6.9 declared HALF of all normal words
-# unreadable, and the arbiter silently decided nothing at all.
-#
-# Derived the same way the original was: sit below the low tail, so only
-# genuinely illegible spans are refused. That distribution is
-#   p1 -25.1   p5 -22.1   p10 -19.3   p25 -11.4   median -6.2   p90 -2.8
-# and -22 sits just under p5.
-LOG_MIN_EVIDENCE = -22.0
-
-# HOW FAR AHEAD A READING MUST BE BEFORE THE AUDIO OVERRULES THE DICTIONARY,
-# in nats per emitted frame. Deliberately conservative: accuracy over the
-# confident quarter is ~93% and over everything ~78%, so the gate is set to
-# decide roughly that quarter and leave the rest flagged. Lower it to decide
-# more and review less; raise it if a wrong reading ever slips through.
-#
-# This number is the tuning surface, NOT the metric. It is also the one value
-# here that was never validated on real rivals -- the sweep used synthetic
-# decoys, and two harnesses disagreed on absolute margins even while agreeing
-# on which metric was best. Calibrate it against real output before trusting
-# it. See docs/reading-arbitration.md §7.
-MARGIN_DECIDE = 3.0
-
 VOWEL_OF = {
     **{c: "あ" for c in "あかさたなはまやらわがざだばぱゃ"},
     **{c: "い" for c in "いきしちにひみりぎじぢびぴ"},
@@ -93,9 +60,11 @@ class Aligner:
         all three rather than trusting them.
         """
         from . import dualctc, hfmodel
+        from .model_spec import DEFAULT_MODEL
 
         spec = (model or "").strip()
-        if not spec or spec.startswith(dualctc.SPEC_PREFIX) or spec.endswith(".pt"):
+        if (not spec or spec == DEFAULT_MODEL
+                or spec.startswith(dualctc.SPEC_PREFIX) or spec.endswith(".pt")):
             dualctc.load_into(self, spec or None, log=log)
         else:
             hfmodel.load_into(self, spec, log=log)
@@ -274,148 +243,7 @@ class Aligner:
         inv = {v: k for k, v in self.vocab.items()}
         return "".join(inv.get(i, "") for i in kept)
 
-    def disputed_readings(self, lp: torch.Tensor, cells: list[dict],
-                          words: list[tuple[str, str]], owner: list[int],
-                          candidates_of) -> list[dict]:
-        """Words with more than one possible reading, put to the audio.
 
-        `candidates_of(surface, ours)` returns the rival readings worth
-        hearing; the dictionary supplies them, because it is the thing that
-        knows 心 is こころ AND しん. Each candidate is scored over the word's
-        OWN span and the best one wins -- if it wins by enough.
-
-        Returns one dict per contested word:
-
-            surface, ours, theirs, chosen, margin, verdict
-
-        `verdict` is "audio" when the margin cleared MARGIN_DECIDE and the
-        audio's pick is authoritative, or "unclear" when it did not and
-        `chosen` falls back to the analyser's reading. EVERY contested word
-        gets a choice; the verdict records how much that choice is worth. The
-        caller surfaces both -- nothing here blocks, prompts or stays silent.
-
-        WHY A MARGIN AND NOT A WINNER. Accuracy rises with the gap between
-        candidates: over the confident quarter the scoring is right ~93%, over
-        everything ~78%. A bare argmax spends that accuracy on the near-ties,
-        which are precisely the cases that should be left alone. The gate is
-        deliberately conservative -- it decides the clear minority and hands
-        the rest to the user, because a silently corrupted reading costs far
-        more than a flagged one.
-
-        WHY THE EVIDENCE FLOOR EXISTS, separately from the margin. A span the
-        model cannot read at all still produces a verdict, and it is whichever
-        candidate won by noise. Measured on the line that raised this, 方
-        scored 0.0009 against 0.0003 -- against a median of 0.085 for an
-        ordinary aligned syllable -- and the wrong reading "won" silently.
-
-        Each candidate is scored over the word's own span, which is the only
-        form of this comparison that works. Scoring against the whole track
-        lets a candidate find a better-matching place elsewhere in the song,
-        measured as the true reading losing 34 times out of 34.
-        """
-        out: list[dict] = []
-        for w, (surface, ours) in enumerate(words):
-            rivals = candidates_of(surface, ours)
-            if not rivals:
-                continue
-            idx = [i for i, o in enumerate(owner) if o == w]
-            starts = [cells[i]["start"] for i in idx
-                      if i < len(cells) and cells[i].get("start") is not None]
-            if not starts:
-                continue
-            nxt = next((cells[j]["start"] for j in range(idx[-1] + 1, len(cells))
-                        if cells[j].get("start") is not None), None)
-            t0 = min(starts)
-            t1 = nxt if nxt is not None else t0 + 0.25 * len(idx)
-            f0 = max(int(t0 / SEC_PER_FRAME), 0)
-            f1 = min(int(t1 / SEC_PER_FRAME) + 1, lp.shape[0])
-            if f1 - f0 < len(idx) + 2:
-                continue
-            crop = lp[f0:f1]
-
-            ours_score = self.reading_score(crop, ours)
-            if ours_score is None:
-                continue
-            scored = [(ours_score, ours)]
-            for kana in rivals:
-                got = self.reading_score(crop, kana)
-                if got is not None:
-                    scored.append((got, kana))
-            if len(scored) < 2:
-                continue
-            scored.sort(key=lambda pair: -pair[0])
-            best_score, best = scored[0]
-            runner_up = scored[1][0]
-            margin = best_score - runner_up
-
-            # An unreadable span decides nothing, however wide the margin
-            # between two meaningless numbers looks.
-            readable = max(s for s, _k in scored) > LOG_MIN_EVIDENCE
-            confident = readable and margin >= MARGIN_DECIDE
-
-            # THE AUDIO AGREEING IS NOT NEWS. Most words carry some rival in a
-            # dictionary this large -- 今日 alone offers four readings -- so
-            # reporting every one of them would bury the real disputes in
-            # noise. A confident vote for the reading we already had is a
-            # confirmation, and confirmations are silent.
-            if confident and best == ours:
-                continue
-
-            out.append({
-                "surface": surface,
-                "ours": ours,
-                "theirs": scored[1][1] if best == ours else best,
-                "chosen": best if confident else ours,
-                "margin": round(margin, 3),
-                "verdict": "audio" if confident else "unclear",
-            })
-        return out
-
-    def reading_score(self, crop: torch.Tensor, kana: str) -> float | None:
-        """How well `kana` accounts for this audio -- comparable across LENGTHS.
-
-        Mean log-probability over the frames that actually EMIT a token, with
-        blank frames excluded. That exclusion is the whole point.
-
-        The obvious scores both fail, and fail in opposite directions:
-
-          * TOTAL log-probability over the crop is a ruler, not an ear. Blank
-            is cheap even in voiced audio, so a shorter candidate collects
-            cheap blank frames and wins almost regardless of what was sung --
-            measured, it picked a too-short decoy over the truth 88-95% of the
-            time.
-          * MEAN PER-MORA CONFIDENCE (what this used to be) leaves the audio a
-            candidate does not explain entirely free, so a 2-mora candidate can
-            sit in a 3-mora span, take its two best frames and ignore the rest.
-            Measured at 43% against a truncated decoy -- worse than a coin flip.
-
-        Scoring only the emitting frames removes the CAUSE rather than
-        rescaling the symptom: it asks the model about the sounds the candidate
-        claims were sung and nothing else. Measured at 93% over the confident
-        quarter, against 84% for the best length-normalised alternative, and it
-        needs no tuned constant. See docs/reading-arbitration.md for the sweep,
-        the runner-up (`logprob / L`) and the caveats.
-        """
-        import warnings
-
-        from torchaudio.functional import forced_align
-
-        from . import moras
-
-        token_ids, _spans, _missing = self.tokenise(moras.split(kana))
-        if not token_ids or len(token_ids) > crop.shape[0]:
-            return None
-        targets = torch.tensor([token_ids], dtype=torch.int32)
-        try:
-            with warnings.catch_warnings():
-                warnings.filterwarnings("ignore", message=".*forced_align.*",
-                                        category=UserWarning)
-                labels, scores = forced_align(crop.unsqueeze(0), targets,
-                                              blank=self.blank)
-        except Exception:                            # noqa: BLE001
-            return None
-        emitting = scores[0][labels[0] != self.blank]
-        return float(emitting.mean()) if emitting.numel() else None
 
     def align_units(self, lp: torch.Tensor, units: list[str],
                     frame_offset: int = 0) -> list[dict]:

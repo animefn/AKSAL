@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .locate import Segment
+from .model_spec import DEFAULT_MODEL, cache_tag
 
 STATE_SUFFIX = ".aksal.json"
 
@@ -55,13 +56,28 @@ class Project:
     align_audio: Path                # what emissions were computed over
     reference: Path | None = None
     segments: list[Segment] = field(default_factory=list)
+    # `model` is retained for old callers and old state files. New code uses
+    # the two explicit roles below.
     model: str = ""
+    timing_model: str = ""
+    selection_model: str = ""
     lyrics_source: str = "jp"        # "jp" | "romaji"
     conditioned: bool = True
 
     # Slice of align_audio to decode. Not persisted -- re-derived each run.
     audio_start: float | None = None
     audio_dur: float | None = None
+
+    def __post_init__(self) -> None:
+        legacy = self.model or DEFAULT_MODEL
+        self.timing_model = self.timing_model or legacy
+        self.selection_model = self.selection_model or legacy
+        # Keep the compatibility attribute meaningful for callers which have
+        # not learned about roles yet. It is never used to resolve new runs.
+        self.model = self.model or (
+            self.timing_model
+            if self.timing_model == self.selection_model else ""
+        )
 
     @property
     def name(self) -> str:
@@ -109,7 +125,16 @@ class Project:
             s = self.segments[0]
             span = f".{int(s.ref_start)}-{int(s.ref_end)}"
         raw = "" if self.conditioned else ".raw"
-        return self.sibling(f".emissions{span}{raw}.pt")
+        model = cache_tag(self.timing_model)
+        return self.sibling(f".emissions.{model}{span}{raw}.pt")
+
+    def emissions_cache_for(self, source_tag: str,
+                            model: str | None = None) -> Path:
+        """An emissions cache for phase 2 or another named audio source."""
+        return self.sibling(
+            f".emissions.{cache_tag(model or self.timing_model)}."
+            f"{source_tag}.pt"
+        )
 
     # --- segment lookup ------------------------------------------------------
     def segment_at_ref(self, t: float) -> Segment | None:
@@ -175,6 +200,8 @@ class Project:
             "reference": str(self.reference) if self.reference else None,
             "segments": [s.to_dict() for s in self.segments],
             "model": self.model,
+            "timing_model": self.timing_model,
+            "selection_model": self.selection_model,
             "lyrics_source": self.lyrics_source,
             "conditioned": self.conditioned,
         }, indent=2), encoding="utf-8")
@@ -195,6 +222,8 @@ class Project:
             reference=Path(d["reference"]) if d.get("reference") else None,
             segments=[Segment(**s) for s in d.get("segments", [])],
             model=d.get("model", ""),
+            timing_model=d.get("timing_model", ""),
+            selection_model=d.get("selection_model", ""),
             lyrics_source=d.get("lyrics_source", "jp"),
             conditioned=d.get("conditioned", True),
         )

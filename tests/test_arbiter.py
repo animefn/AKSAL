@@ -50,10 +50,9 @@ def test_unequal_mora_counts_do_nominate(monkeypatch):
     dispute that matters: まだ/いまだ is 2 against 3, こころ/しん 3 against 2,
     and this case, えいえん against とわ, 4 against 2.
 
-    `reading_score` no longer has that defect (it scores only the emitting
-    frames, so blank padding cannot be collected for free), so the gate is
-    gone and an unequal pair must reach the audio. See
-    docs/reading-arbitration.md.
+    The complete-sentence selector compares unequal readings over the same
+    full line interval, so the old nomination gate is gone and an unequal pair
+    must reach the audio. See docs/reading-arbitration.md.
     """
     class FakeRival:
         def convert(self, _surface):

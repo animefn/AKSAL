@@ -28,7 +28,8 @@ def test_the_three_commands_exist():
 
 @pytest.mark.parametrize("flag", [
     "--video", "--lyrics", "--reference", "--song-start", "--duration",
-    "--insert-romaji", "--lyrics-format", "--model", "--separate-audio",
+    "--insert-romaji", "--lyrics-format", "--model", "--timing-model",
+    "--selection-model", "--separate-audio",
     "--no-lrc-hints", "--lead-in", "-o",
 ])
 def test_phase1_keeps_its_documented_flags(flag):
@@ -36,7 +37,8 @@ def test_phase1_keeps_its_documented_flags(flag):
 
 
 @pytest.mark.parametrize("flag", ["--video", "--reference", "--group",
-                                 "--tracks", "--model", "--separate-audio",
+                                 "--tracks", "--model", "--timing-model",
+                                 "--selection-model", "--separate-audio",
                                  "--time-against"])
 def test_phase2_keeps_its_documented_flags(flag):
     assert flag in flags("phase2")
@@ -65,6 +67,32 @@ def test_separation_is_off_by_default():
 
 def test_the_model_defaults_to_the_built_in_one():
     assert flags("phase1")["--model"].default is None
+
+
+def test_role_specific_models_default_to_the_general_model():
+    assert flags("phase1")["--timing-model"].default is None
+    assert flags("phase1")["--selection-model"].default is None
+
+
+@pytest.mark.parametrize("argv,expected", [
+    ([], ("sakasegawa/japanese-wav2vec2-large-hiragana-ctc",) * 2),
+    (["--model", "X"], ("X", "X")),
+    (["--timing-model", "Y"],
+     ("Y", "sakasegawa/japanese-wav2vec2-large-hiragana-ctc")),
+    (["--selection-model", "Z"],
+     ("sakasegawa/japanese-wav2vec2-large-hiragana-ctc", "Z")),
+    (["--model", "X", "--timing-model", "Y"], ("Y", "X")),
+    (["--model", "X", "--selection-model", "Z"], ("X", "Z")),
+    (["--model", "X", "--timing-model", "Y", "--selection-model", "Z"],
+     ("Y", "Z")),
+])
+def test_model_precedence(argv, expected):
+    from aksal.model_spec import resolve
+
+    values = iter(argv)
+    supplied = dict(zip(values, values))
+    assert resolve(supplied.get("--model"), supplied.get("--timing-model"),
+                   supplied.get("--selection-model")) == expected
 
 
 def test_song_start_accepts_the_three_timestamp_forms():
