@@ -26,12 +26,12 @@ For command examples organized by what material you already have, start with
 
 The easiest route is the
 [latest packaged release](https://github.com/animefn/AKSAL/releases/latest).
-Unzip the Windows archive and keep `aksal.exe` beside its `_internal` folder.
+Download the Windows x64 zip or Linux x64 tarball, extract it, and keep
+`aksal.exe` or `aksal` beside its `_internal` directory. You may add that
+extracted directory to `PATH`; do not move only the executable elsewhere.
 
-A tested Linux x64 archive is produced by the manual `build-linux` GitHub
-Actions workflow. Runtime storage and helper-tool selection support macOS, but
-a distributable macOS application still needs a native build, code signing,
-and notarization.
+Runtime storage and helper-tool selection support macOS, but a distributable
+macOS application still needs a native build, code signing, and notarization.
 
 Packaged builds offer to download a compatible FFmpeg build when it is missing.
 On macOS, install FFmpeg with `brew install ffmpeg`. The acoustic and Demucs
@@ -406,18 +406,21 @@ manager instead of the self-updater.
 
 ### Building a release
 
-PyInstaller builds are native; they cannot be cross-compiled. A tag drives the
-Windows release version and archive name:
+PyInstaller builds are native; they cannot be cross-compiled. A tag starts
+parallel native Windows and Linux jobs and drives both embedded versions,
+archive names, and the release name:
 
 ```bash
 git tag v0.1.0
 git push origin v0.1.0
 ```
 
-The workflow runs tests, freezes the application as an `onedir` bundle,
-verifies `--help`, `--version`, model imports, and separation imports, writes a
-SHA-256 sidecar, then publishes the archive. The manual Linux workflow follows
-the same native build and smoke-test path without publishing a release.
+Each job runs the tests and freezes an `onedir` bundle. The build process
+verifies `--help`, `--version`, model imports, and separation imports. Only
+after both native jobs succeed does the publish job create one release with
+the Windows zip, Linux tarball, and SHA-256 sidecars. Manual dispatch runs the
+same two jobs as a dry run without publishing; the separate `build-linux`
+workflow remains available for a quicker Linux-only check.
 
 `onedir` is intentional: a one-file PyTorch executable would unpack hundreds
 of megabytes on every launch.

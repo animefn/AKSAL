@@ -20,11 +20,14 @@ sung units and convert Japanese lyrics into romaji while making the karaoke.
 
 ### **[⬇️ Download the latest AKSAL release](https://github.com/animefn/AKSAL/releases/latest)**
 
-The Windows release is ready to unzip and run. AKSAL downloads its acoustic
-models on first use, so the first run takes longer and needs an internet
-connection.
+Windows and Linux x64 releases are ready to extract and run. Keep the
+`_internal` directory beside the AKSAL executable. You can add that whole
+directory to `PATH` if you want to run `aksal` from anywhere.
 
-Want to run it from source or try the Linux build? See
+AKSAL downloads its acoustic models on first use, so the first run takes
+longer and needs an internet connection.
+
+Want to run it from source or see platform details? See
 **[installation and technical details](README_EXTENDED.md#installation-and-downloads)**.
 
 ## What AKSAL does today
