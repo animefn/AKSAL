@@ -5,8 +5,22 @@ import math
 
 import pytest
 import torch
+import numpy as np
 
 from aksal import reading_selector
+
+
+def test_audio_clip_is_a_direct_padded_window_not_the_whole_track():
+    samples = np.arange(10 * 16_000, dtype=np.float32)
+    got = reading_selector.audio_clip(samples, 2.25, 4.75)
+    assert len(got) == 40_000
+    assert got[0] == samples[36_000]
+    assert got[-1] == samples[75_999]
+
+
+def test_audio_clip_rejects_an_interval_too_short_to_score():
+    with pytest.raises(reading_selector.SelectionError, match="too short"):
+        reading_selector.audio_clip(np.ones(16_000, np.float32), 0.0, 0.49)
 
 
 class FakeAligner:

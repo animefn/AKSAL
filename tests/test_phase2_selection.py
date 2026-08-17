@@ -15,6 +15,7 @@ class FakeAligner:
     model_identity = "fake-kana-model@1"
     frame_stride = 320
     loaded_models = []
+    emission_sample_lengths = []
 
     def __init__(self, model, log=print):
         self.log = log
@@ -27,7 +28,8 @@ class FakeAligner:
                if char in self.vocab]
         return ids, [], missing
 
-    def emissions(self, _samples, cache=None):
+    def emissions(self, samples, cache=None):
+        self.emission_sample_lengths.append(len(samples))
         logits = torch.full((150, 4), -8.0)
         logits[:, 0] = 8.0
         for frame, token in ((55, 1), (65, 2), (75, 3)):
@@ -47,7 +49,8 @@ def arguments(lines):
     return Namespace(
         lines=lines, tracks="jp,romaji", video=None, output_dir=None,
         model=None, timing_model=None, selection_model=None, analyser=None,
-        separate_vocals=False, time_against="video", device="cpu",
+        separate_vocals=False, separate_selection_audio=False,
+        time_against="video", device="cpu",
         group="syllable", snap=False, reference=None,
     )
 
@@ -60,7 +63,7 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
         root=root, video=video, mode="video", align_audio=video,
         segments=[Segment(0.0, 10.0, 0.0, 10.0, 0.0)],
         lyrics_source="jp", timing_model="timing-model",
-        selection_model="selection-model",
+        selection_model="selection-model", selection_separated=True,
     )
     project.save()
     ass.write(
@@ -97,13 +100,24 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
                            choices=choices)
 
     monkeypatch.setattr(reading_selector, "select", capture_score_window)
+    separated_lengths = []
+
+    def fake_separate(clips, **_kwargs):
+        separated_lengths.extend(map(len, clips))
+        return clips
+
+    from aksal import separate
+    monkeypatch.setattr(separate, "separate_waveforms", fake_separate)
 
     FakeAligner.loaded_models.clear()
+    FakeAligner.emission_sample_lengths.clear()
     cmd_phase2(arguments(project.lines_file))
     assert FakeAligner.loaded_models == ["selection-model", "timing-model"]
-    # The corrected 1.0-2.0 subtitle window is scored with 0.75 seconds of
-    # context on both sides: frames 12 through 137 at 20 ms per frame.
-    assert score_windows == [126]
+    # The corrected 1.0-2.0 subtitle is independently forwarded as the padded
+    # 0.25-2.75 clip. It is not scored by slicing the 3-second timing tensor.
+    assert separated_lengths == [40_000]
+    assert FakeAligner.emission_sample_lengths == [40_000, 48_000]
+    assert score_windows == [150]
     assert "いまだ" in project.readings.read_text(encoding="utf-8")
     assert project.selections.exists()
     assert project.kara_jp_file.exists()
@@ -116,5 +130,7 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
             AssertionError("saved selection was not reused")),
     )
     FakeAligner.loaded_models.clear()
+    FakeAligner.emission_sample_lengths.clear()
     cmd_phase2(arguments(project.lines_file))
     assert FakeAligner.loaded_models == ["timing-model"]
+    assert FakeAligner.emission_sample_lengths == [48_000]

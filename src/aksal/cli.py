@@ -306,7 +306,8 @@ def cmd_phase1(args) -> None:
                    selection_model=selection_model,
                    analyser=args.analyser,
                    conditioned=bool(args.separate_vocals),
-                   separated=bool(args.separate_vocals))
+                   separated=bool(args.separate_vocals),
+                   selection_separated=bool(args.separate_selection_audio))
     proj.audio_start, proj.audio_dur = (window if window else (None, None))
     proj.save()
 
@@ -450,12 +451,14 @@ def cmd_phase1(args) -> None:
             f"{READING_CONTEXT:.2f}s context on each side)")
         fresh_plans = []
         decision_model = model_spec.decision_identity(selection_model)
+        selection_audio = (f"demucs:{separate.MODEL}"
+                           if args.separate_selection_audio else "source")
         for line_no, words, choices, start, end in plans:
             decision_key = selection_state.decision_key(
                 surface="".join(surface for surface, _reading in words),
                 start=start, end=end, model_identity=decision_model,
                 audio_identity=audio_identity, choices=choices,
-                stage="phase1",
+                stage="phase1", selection_audio=selection_audio,
             )
             active_selection_keys.add(decision_key)
             saved = selection_state.get(selection_data, decision_key)
@@ -465,35 +468,46 @@ def cmd_phase1(args) -> None:
                 fresh_plans.append(
                     (decision_key, line_no, words, choices, start, end))
 
-        if fresh_plans:
+        direct_plans = []
+        direct_clips = []
+        for plan in fresh_plans:
+            try:
+                direct_clips.append(reading_selector.audio_clip(
+                    y, plan[-2], plan[-1], audio_mod.SR))
+                direct_plans.append(plan)
+            except reading_selector.SelectionError as exc:
+                selection_errors[plan[1]] = str(exc)
+
+        if direct_plans and args.separate_selection_audio:
+            direct_clips = separate.separate_waveforms(
+                direct_clips, sample_rate=audio_mod.SR,
+                device=args.device, log=log)
+            direct_clips = [
+                audio_mod.normalize(audio_mod.highpass(clip))
+                for clip in direct_clips
+            ]
+
+        if direct_plans:
             if selection_model == timing_model:
                 selector = aligner
-                selection_lp = lp
             else:
-                # Rough timing is complete. Release its large tensor and model
-                # before loading a different selector checkpoint.
+                # Rough timing is complete. Release its model before loading a
+                # different selector checkpoint.
                 del lp
                 import gc
 
                 del aligner
                 gc.collect()
                 selector = A.Aligner(selection_model, log=log)
-                selection_lp = None
 
-        for decision_key, line_no, words, choices, start, end in fresh_plans:
+        for plan, clip in zip(direct_plans, direct_clips):
+            decision_key, line_no, words, choices, _start, _end = plan
             try:
-                if selection_lp is not None:
-                    f0 = max(int(start / A.SEC_PER_FRAME), 0)
-                    f1 = min(int(end / A.SEC_PER_FRAME) + 1,
-                             selection_lp.shape[0])
-                    line_lp = selection_lp[f0:f1]
-                else:
-                    s0 = max(int(start * audio_mod.SR), 0)
-                    s1 = min(int(end * audio_mod.SR), len(y))
-                    if s1 - s0 < audio_mod.SR // 2:
-                        raise reading_selector.SelectionError(
-                            "rough line interval is too short")
-                    line_lp = selector.emissions(y[s0:s1])
+                # Always run the model on the bounded line clip. Reusing a
+                # slice of full-track emissions changes normalisation and
+                # contextual attention; EDLONG's 未だ measured 94% いまだ here
+                # but only 45% in the long-track slice.
+                line_lp = selector.emissions(clip)
                 selections[line_no] = reading_selector.select(
                     words, selector, line_lp, readings.candidate_readings,
                     choices=choices)
@@ -807,7 +821,8 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
                    selection_model=selection_model,
                    analyser=args.analyser or "ichiran",
                    conditioned=bool(args.separate_vocals),
-                   separated=bool(args.separate_vocals))
+                   separated=bool(args.separate_vocals),
+                   selection_separated=bool(args.separate_selection_audio))
     proj.audio_start, proj.audio_dur = a_start, a_dur
     proj.save()
     return proj
@@ -815,7 +830,8 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
 
 def cmd_phase2(args) -> None:
     from . import align as A
-    from . import reading_selector, timing
+    from . import audio as audio_mod
+    from . import reading_selector, separate, timing
     from .audio import SR, envelope, prepare
 
     lines_file: Path = args.lines
@@ -862,6 +878,8 @@ def cmd_phase2(args) -> None:
     if args.separate_vocals:
         proj.separated = True
         proj.conditioned = True
+    if args.separate_selection_audio:
+        proj.selection_separated = True
     proj.save()
 
     log(f"\nproject : {proj.name}  ({proj.mode} mode)")
@@ -950,12 +968,15 @@ def cmd_phase2(args) -> None:
             f"{READING_CONTEXT:.2f}s context on each side)")
         fresh_plans = []
         decision_model = model_spec.decision_identity(proj.selection_model)
+        isolate_selection = proj.selection_separated and not proj.separated
+        selection_audio = (f"demucs:{separate.MODEL}"
+                           if isolate_selection else "source")
         for event_index, surface, words, choices, start, end in selection_plans:
             key = selection_state.decision_key(
                 surface=surface, start=start, end=end,
                 model_identity=decision_model,
                 audio_identity=audio_identity, choices=choices,
-                stage="phase2",
+                stage="phase2", selection_audio=selection_audio,
             )
             active_selection_keys.add(key)
             saved = selection_state.get(selection_data, key)
@@ -965,20 +986,32 @@ def cmd_phase2(args) -> None:
                 fresh_plans.append(
                     (key, event_index, words, choices, start, end))
 
-        if fresh_plans:
-            selector = A.Aligner(proj.selection_model, log=log)
-            selector_cache_key = emissions_key(
-                selector.model_identity, selector.frame_stride, y,
-                audio_identity)
-            selection_lp = selector.emissions(
-                y, cache=proj.emissions_cache_for(selector_cache_key))
+        direct_plans = []
+        direct_clips = []
+        for plan in fresh_plans:
+            try:
+                direct_clips.append(reading_selector.audio_clip(
+                    y, plan[-2], plan[-1], SR))
+                direct_plans.append(plan)
+            except reading_selector.SelectionError as exc:
+                selection_errors[plan[1]] = str(exc)
 
-        for key, event_index, words, choices, start, end in fresh_plans:
-            f0 = max(int(start / A.SEC_PER_FRAME), 0)
-            f1 = min(int(end / A.SEC_PER_FRAME) + 1, selection_lp.shape[0])
+        if direct_plans and isolate_selection:
+            direct_clips = separate.separate_waveforms(
+                direct_clips, sample_rate=SR, device=args.device, log=log)
+            direct_clips = [
+                audio_mod.normalize(audio_mod.highpass(clip))
+                for clip in direct_clips
+            ]
+
+        if direct_plans:
+            selector = A.Aligner(proj.selection_model, log=log)
+
+        for plan, clip in zip(direct_plans, direct_clips):
+            key, event_index, words, choices, _start, _end = plan
             try:
                 selection = reading_selector.select(
-                    words, selector, selection_lp[f0:f1],
+                    words, selector, selector.emissions(clip),
                     readings.candidate_readings, choices=choices)
             except reading_selector.SelectionError as exc:
                 selection_errors[event_index] = str(exc)
@@ -987,10 +1020,10 @@ def cmd_phase2(args) -> None:
             selection_state.put(
                 selection_data, key, selection, "phase2")
 
-        if fresh_plans and proj.selection_model == proj.timing_model:
-            aligner, lp = selector, selection_lp
-        elif fresh_plans:
-            del selection_lp, selector
+        if direct_plans and proj.selection_model == proj.timing_model:
+            aligner = selector
+        elif direct_plans:
+            del selector
             import gc
 
             gc.collect()
@@ -1284,14 +1317,17 @@ def build_parser() -> argparse.ArgumentParser:
         sp.add_argument("--selection-model", default=None,
                         help="override --model for reading selection only")
         sp.add_argument("--device", default="cpu", help="demucs device")
-        sp.add_argument("--separate-audio", dest="separate_vocals",
-                        action="store_true",
-                        help="isolate vocals with demucs before aligning. "
-                             "Off by default: measured over eight songs against "
-                             "hand-timed karaoke it is a wash -- very slightly "
-                             "better on average, worse in the tail -- for about "
-                             "four times the runtime. Worth trying on a noisy "
-                             "mix.")
+        separation = sp.add_mutually_exclusive_group()
+        separation.add_argument(
+            "--separate-audio", dest="separate_vocals", action="store_true",
+            help="isolate vocals with demucs before timing and reading "
+                 "selection. Off by default: measured over eight songs it is "
+                 "a wash for timing and costs about four times the runtime.")
+        separation.add_argument(
+            "--separate-selection-audio", action="store_true",
+            help="run demucs only on short ambiguous-reading windows. Rough "
+                 "timing stays on the original audio; faster than separating "
+                 "the whole song and useful when music masks a reading.")
     return p
 
 
@@ -1360,6 +1396,9 @@ def cmd_find(args) -> None:
             cmd += [flag, value]
     if args.separate_vocals:
         cmd.append("--separate-audio")
+        cmd += ["--device", args.device]
+    elif args.separate_selection_audio:
+        cmd.append("--separate-selection-audio")
         cmd += ["--device", args.device]
     log("\nphase 1 command:\n  " + " ".join(cmd))
 

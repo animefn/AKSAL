@@ -325,6 +325,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--skip-cost N` | off | Let audio between lines match nothing. Measured a win on two songs and a regression on three, so off; try `-1.5` if output looks smeared across an instrumental. |
 | `--model SPEC` | built-in | A Hugging Face id or a checkpoint path. Must emit kana; refused if not. |
 | `--separate-audio` | off | Isolate vocals with demucs first. A wash for ~4× the runtime; worth trying on a noisy mix. |
+| `--separate-selection-audio` | off | Run Demucs only on the short padded windows used to settle ambiguous readings. Rough timing stays on the original mix. Mutually exclusive with `--separate-audio`. |
 | `--device` | `cpu` | demucs device. |
 
 ### phase2 — corrected lines to karaoke
@@ -343,6 +344,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--timing-model` | `--model` | Override the model used for rough/final timing. |
 | `--selection-model` | `--model` | Override the complete-line reading selector. Used for Japanese; romaji skips it. |
 | `--separate-audio`, `--device` | off, `cpu` | Separate the actual timing/selection source with Demucs. |
+| `--separate-selection-audio` | off | Separate only ambiguous-reading clips; the choice is saved in the project. |
 
 ### find — anime name to a ready-to-run phase 1
 
@@ -372,6 +374,13 @@ Ranked by impact:
    songs it is a wash for timing — marginally better on average, worse in the
    tail, ~4× the runtime. It earns its keep on a noisy mix: SFX or dialogue
    over the song.
+
+Reading selection is deliberately different from rough timing. Each ambiguous
+line is forwarded through the selection model as its own padded clip; AKSAL
+never scores it by slicing probabilities previously computed over a long song
+window. Neural context and per-window normalisation make those operations
+observably different. `--separate-selection-audio` applies Demucs only to these
+small clips and loads Demucs once for all of them.
 
 ### Two things that silently ruin output
 
@@ -463,10 +472,11 @@ the alternatives are in front of you in Aegisub rather than in a log.
 For Japanese lines, the selection model scores every complete-sentence reading
 hypothesis with 0.75 seconds of audio context on each side of the line. It
 changes a word only when the result is likely; uncertain alternatives stay
-visible for review. The added context never changes the subtitle timing. Phase
-2 uses the corrected line windows, saves its decisions in `selections.json`, and
-reuses them until the text, timing, audio, model, candidates, analyser, or
-scorer changes. A manual edit in `readings.tsv` always wins. See
+visible for review. The model evaluates that bounded clip directly rather than
+reusing long-track timing emissions. The added context never changes the
+subtitle timing. Phase 2 uses the corrected line windows, saves its decisions
+in `selections.json`, and reuses them until the text, timing, audio, model,
+candidates, analyser, or scorer changes. A manual edit in `readings.tsv` always wins. See
 [docs/reading-arbitration.md](docs/reading-arbitration.md).
 
 ---

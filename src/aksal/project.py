@@ -60,6 +60,7 @@ class Project:
     lyrics_source: str | None = None
     conditioned: bool = False
     separated: bool = False
+    selection_separated: bool = False
     audio_start: float | None = None
     audio_dur: float | None = None
 
@@ -201,6 +202,7 @@ class Project:
             "lyrics_source": self.lyrics_source,
             "conditioned": self.conditioned,
             "separated": self.separated,
+            "selection_separated": self.selection_separated,
             "audio_start": self.audio_start,
             "audio_dur": self.audio_dur,
         }
@@ -252,6 +254,8 @@ class Project:
                 lyrics_source=data.get("lyrics_source"),
                 conditioned=bool(data.get("conditioned", False)),
                 separated=bool(data.get("separated", False)),
+                selection_separated=bool(
+                    data.get("selection_separated", False)),
                 audio_start=data.get("audio_start"),
                 audio_dur=data.get("audio_dur"),
             )

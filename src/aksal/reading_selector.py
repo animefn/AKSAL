@@ -11,6 +11,7 @@ import math
 from dataclasses import dataclass
 from typing import Callable
 
+import numpy as np
 import torch
 
 from . import moras
@@ -21,6 +22,21 @@ MAX_COMBINATIONS = 256
 
 class SelectionError(RuntimeError):
     """The line could not be compared safely."""
+
+
+def audio_clip(samples: np.ndarray, start: float, end: float,
+               sample_rate: int = 16_000) -> np.ndarray:
+    """Copy one bounded line window for an independent model forward pass.
+
+    Slicing an emission tensor computed over a long track is not equivalent:
+    feature normalisation and the model's contextual layers have already seen
+    the surrounding song. Reading selection is intentionally local.
+    """
+    first = max(int(start * sample_rate), 0)
+    last = min(int(end * sample_rate), len(samples))
+    if last - first < sample_rate // 2:
+        raise SelectionError("rough line interval is too short")
+    return np.ascontiguousarray(samples[first:last], dtype=np.float32)
 
 
 @dataclass(frozen=True)

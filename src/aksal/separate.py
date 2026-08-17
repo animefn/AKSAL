@@ -20,7 +20,60 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 
+import numpy as np
+
 MODEL = "htdemucs"
+
+
+def separate_waveforms(waveforms: list[np.ndarray], sample_rate: int = 16_000,
+                       device: str = "cpu", log=print) -> list[np.ndarray]:
+    """Isolate several short in-memory clips with one Demucs model load.
+
+    This is the fast path for reading tie-breaks: only ambiguous line windows
+    are separated, and the expensive Separator object is shared across them.
+    """
+    if not waveforms:
+        return []
+    try:
+        import torch
+        from demucs.api import Separator
+        from torchaudio.functional import resample
+    except ImportError as exc:
+        raise RuntimeError(
+            "vocal separation needs demucs, which this copy of AKSAL does not "
+            "have.\n    pip install demucs") from exc
+
+    log(f"  loading {MODEL} for {len(waveforms)} reading-selection "
+        f"window(s)")
+    separator = Separator(model=MODEL, device=device, progress=False)
+    outputs: list[np.ndarray] = []
+    try:
+        for index, samples in enumerate(waveforms, 1):
+            log(f"  separating reading window {index}/{len(waveforms)}")
+            tensor = torch.from_numpy(
+                np.ascontiguousarray(samples, dtype=np.float32)).unsqueeze(0)
+            _original, stems = separator.separate_tensor(
+                tensor, sr=sample_rate)
+            if "vocals" not in stems:
+                raise RuntimeError(
+                    f"demucs returned stems {sorted(stems)} but no 'vocals'")
+            vocals = stems["vocals"]
+            if vocals.ndim == 2:
+                vocals = vocals.mean(dim=0)
+            if separator.samplerate != sample_rate:
+                vocals = resample(
+                    vocals, separator.samplerate, sample_rate)
+            outputs.append(vocals.detach().cpu().numpy().astype(
+                np.float32, copy=True))
+            del _original, stems, vocals, tensor
+    finally:
+        del separator
+        import gc
+
+        gc.collect()
+        if device.startswith("cuda") and torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    return outputs
 
 
 def separate(source: Path, target: Path, device: str = "cpu",

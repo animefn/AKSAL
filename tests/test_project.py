@@ -53,7 +53,7 @@ def test_round_trip(tmp_path):
         segments=[Segment(0.5, 87.6, 36.5, 123.6, 36.0, support=7539)],
         timing_model="timing/id", selection_model="selection/id",
         analyser="unidic", lyrics_source="romaji", conditioned=False,
-        separated=True,
+        separated=True, selection_separated=True,
         audio_start=1.25, audio_dur=89.5,
     )
     project.save()
@@ -64,6 +64,7 @@ def test_round_trip(tmp_path):
     assert loaded.lyrics_source == "romaji"
     assert loaded.conditioned is False
     assert loaded.separated is True
+    assert loaded.selection_separated is True
     assert loaded.audio_start == pytest.approx(1.25)
     assert loaded.audio_dur == pytest.approx(89.5)
     assert loaded.segments[0].offset == pytest.approx(36.0)

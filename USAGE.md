@@ -180,11 +180,16 @@ lyrics down.
 | `--no-insert-romaji` | phase 1 prefixes each line with its romaji by default, invisible when rendered. This turns that off. |
 | `--group word` | one karaoke cell per word instead of per syllable. Timing is identical. |
 | `--separate-audio` | isolate vocals with demucs first. **Off by default** — measured over eight songs it is a wash: marginally better on average, worse in the tail, for ~4x the runtime. Worth trying on a noisy mix. |
+| `--separate-selection-audio` | run demucs only on short ambiguous-reading windows. Rough timing remains on the original mix, and one Demucs model load is shared across all such windows. |
 | `--model` | use a different acoustic model: a Hugging Face id, or a path to a checkpoint. It must emit **kana** and the tool refuses it if not. |
 | `--skip-cost N` | how freely the aligner may treat audio between lines as unsung. `none` disables it. |
 | `--no-lrc-hints` | ignore LRCLIB synced timings even when verified. |
 | `--lead-in SEC` | shift every cue earlier. |
 | `--tracks jp` | write only one karaoke track. |
+
+`--separate-audio` and `--separate-selection-audio` are mutually exclusive.
+The latter is persisted in a phase-1 project, so phase 2 uses the same
+tie-breaking source if corrected timings require a fresh decision.
 
 ## Files
 

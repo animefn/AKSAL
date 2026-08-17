@@ -180,3 +180,29 @@ def test_stale_stem_is_not_reused(tmp_path, monkeypatch):
     monkeypatch.setattr(builtins, "__import__", no_demucs)
     with pytest.raises(RuntimeError, match="pip install demucs"):
         separate.separate(source, stem, log=lambda *args: None)
+
+
+def test_short_selection_windows_share_one_demucs_model(monkeypatch):
+    import numpy as np
+    from demucs import api
+    from aksal import separate
+
+    made = []
+
+    class FakeSeparator:
+        samplerate = 16_000
+
+        def __init__(self, **kwargs):
+            made.append(kwargs)
+
+        def separate_tensor(self, waveform, sr=None):
+            assert sr == 16_000
+            return waveform, {"vocals": waveform * 2}
+
+    monkeypatch.setattr(api, "Separator", FakeSeparator)
+    clips = [np.ones(8_000, np.float32), np.ones(12_000, np.float32)]
+    got = separate.separate_waveforms(
+        clips, log=lambda *_args, **_kwargs: None)
+    assert len(made) == 1
+    assert [len(clip) for clip in got] == [8_000, 12_000]
+    assert all(np.allclose(clip, 2.0) for clip in got)

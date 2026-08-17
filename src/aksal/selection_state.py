@@ -17,7 +17,7 @@ from .reading_selector import LineSelection, WordDecision
 
 
 SCHEMA_VERSION = 1
-SCORER_ID = "complete-sentence-ctc-v1"
+SCORER_ID = "complete-sentence-direct-ctc-v2"
 VALID_READING = re.compile(r"^[ぁ-ゖゝゞー\s]+$")
 
 
@@ -54,13 +54,15 @@ def save(path: Path, state: dict) -> None:
 
 def decision_key(*, surface: str, start: float, end: float,
                  model_identity: str, audio_identity: str,
-                 choices: list[tuple[str, ...]], stage: str) -> str:
+                 choices: list[tuple[str, ...]], stage: str,
+                 selection_audio: str = "source") -> str:
     payload = {
         "surface": readings.normalise_surface(surface),
         "start": float(start),
         "end": float(end),
         "model": model_identity,
         "audio": audio_identity,
+        "selection_audio": selection_audio,
         "choices": choices,
         "scorer": SCORER_ID,
         "analyser": readings.ENGINE,

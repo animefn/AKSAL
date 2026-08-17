@@ -49,7 +49,7 @@ def test_the_three_commands_exist():
 @pytest.mark.parametrize("flag", [
     "--video", "--lyrics", "--reference", "--song-start", "--duration",
     "--insert-romaji", "--lyrics-format", "--model", "--timing-model",
-    "--selection-model", "--separate-audio",
+    "--selection-model", "--separate-audio", "--separate-selection-audio",
     "--no-lrc-hints", "--lead-in", "-o",
     "--output-dir",
 ])
@@ -60,6 +60,7 @@ def test_phase1_keeps_its_documented_flags(flag):
 @pytest.mark.parametrize("flag", ["--video", "--reference", "--group",
                                  "--tracks", "--model", "--timing-model",
                                  "--selection-model", "--separate-audio",
+                                 "--separate-selection-audio",
                                  "--time-against", "--output-dir"])
 def test_phase2_keeps_its_documented_flags(flag):
     assert flag in flags("phase2")
@@ -84,6 +85,15 @@ def test_removed_flags_stay_removed(gone):
 def test_separation_is_off_by_default():
     """Measured a wash for four times the runtime, so it must be opt-in."""
     assert flags("phase1")["--separate-audio"].default is False
+    assert flags("phase1")["--separate-selection-audio"].default is False
+
+
+def test_full_and_selection_only_separation_are_mutually_exclusive():
+    with pytest.raises(SystemExit):
+        build_parser().parse_args([
+            "phase1", "--video", "x.mkv", "--lyrics", "x.txt",
+            "--separate-audio", "--separate-selection-audio",
+        ])
 
 
 def test_the_model_defaults_to_the_built_in_one():
