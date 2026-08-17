@@ -132,6 +132,7 @@ jobs:
       - name: Publish Windows and Linux release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         shell: bash
         run: |
           tag="${GITHUB_REF_NAME}"
