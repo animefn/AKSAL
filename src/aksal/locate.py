@@ -284,6 +284,45 @@ def _largest_free_span(lo: float, hi: float,
     return max(pieces, key=lambda p: p[1] - p[0]) if pieces else None
 
 
+def _clip_segment(seg: Segment, lo: float, hi: float) -> Segment:
+    """Keep one video-time slice of a constant-offset match."""
+    return Segment(
+        ref_start=round(seg.ref_start + (lo - seg.ep_start), 3),
+        ref_end=round(seg.ref_end - (seg.ep_end - hi), 3),
+        ep_start=round(lo, 3), ep_end=round(hi, 3),
+        offset=seg.offset, support=seg.support)
+
+
+def _is_ordered_crossover(earlier: Segment, later: Segment) -> bool:
+    """Can two widely overlapping matches be consecutive pieces of an edit?
+
+    A repeated arrangement can keep matching the old reference offset after the
+    real cut, while the new offset already matches before it.  That produces an
+    X-shaped pair in video time: the first match starts earlier, the second ends
+    later, and their reference spans still move forwards.  Both chunks carry
+    unique episode audio, so deleting either one loses part of the edit.
+
+    This is structural rather than chorus-specific.  The same rule covers an
+    arbitrary forward jump to the middle or end of a song.  Small overlaps keep
+    the normal boundary-trimming policy below; this special case exists only for
+    an overlap too large for that policy to preserve both chunks.
+    """
+    overlap = earlier.ep_end - later.ep_start
+    return (
+        overlap > MAX_TRIM_SEC
+        and earlier.ep_start < later.ep_start < earlier.ep_end < later.ep_end
+        and earlier.ref_start < later.ref_start
+        # A little reference-time overlap can be ordinary boundary bleed.  A
+        # larger overlap claims the same song material twice and is a genuinely
+        # competing interpretation, not a forward splice.
+        and earlier.ref_end <= later.ref_start + MAX_TRIM_SEC
+        # Each side must contribute a real chunk of episode audio.  This keeps a
+        # short noisy tail from truncating a long, well-supported match.
+        and later.ep_start - earlier.ep_start >= MIN_SEG_SEC
+        and later.ep_end - earlier.ep_end >= MIN_SEG_SEC
+    )
+
+
 def best_chain(found: list[Segment]) -> list[Segment]:
     """Pick the set of chunks that tells one consistent story.
 
@@ -341,7 +380,7 @@ def best_chain(found: list[Segment]) -> list[Segment]:
 
 
 def _resolve_overlaps(found: list[Segment]) -> list[Segment]:
-    """Keep the strongest chunks, TRIMMING small overlaps rather than dropping.
+    """Keep a consistent set of chunks without losing ordered splice suffixes.
 
     Rejecting any chunk that overlaps a stronger one is what silently cost a
     real 18-second chunk on a test-set OP: it grazed its neighbour's boundary by
@@ -350,14 +389,31 @@ def _resolve_overlaps(found: list[Segment]) -> list[Segment]:
     "not present in this cut". They had been broadcast.
 
     A small overlap is a boundary disagreement, not a contradiction, so the
-    weaker chunk gives up the overlapping part and keeps the rest. A LARGE
-    overlap is two genuinely competing claims on the same video, and there the
-    stronger one still wins outright.
+    weaker chunk gives up the overlapping part and keeps the rest.
+
+    A large overlap is normally a competing claim.  There is one important
+    exception: two reference chunks may move forwards in song order while the
+    first starts earlier and the second ends later in video time.  That is a
+    valid splice whose transition is acoustically ambiguous (often because the
+    arrangement repeats).  Clip the earlier mapping where the later one begins
+    so both its prefix and the later chunk's unique suffix survive.
     """
     kept: list[Segment] = []
     for seg in sorted(found, key=lambda s: -s.support):
+        # Resolve ordered crossovers before subtracting stronger claims.  This
+        # must work in either support order: sometimes the ending is the
+        # strongest match and is therefore already in `kept` when its prefix is
+        # visited.
+        adjusted = list(kept)
+        for i, other in enumerate(adjusted):
+            if _is_ordered_crossover(other, seg):
+                adjusted[i] = _clip_segment(
+                    other, other.ep_start, seg.ep_start)
+            elif _is_ordered_crossover(seg, other):
+                seg = _clip_segment(seg, seg.ep_start, other.ep_start)
+
         free = _largest_free_span(seg.ep_start, seg.ep_end,
-                                  [(k.ep_start, k.ep_end) for k in kept])
+                                  [(k.ep_start, k.ep_end) for k in adjusted])
         if free is None:
             continue                      # wholly inside a stronger chunk
         lo, hi = free
@@ -367,11 +423,11 @@ def _resolve_overlaps(found: list[Segment]) -> list[Segment]:
         if trimmed > 0:
             # The song clock moves with the video clock inside a chunk, so the
             # reference span shifts by exactly the same amount.
-            seg = Segment(
-                ref_start=round(seg.ref_start + (lo - seg.ep_start), 3),
-                ref_end=round(seg.ref_end - (seg.ep_end - hi), 3),
-                ep_start=round(lo, 3), ep_end=round(hi, 3),
-                offset=seg.offset, support=seg.support)
+            seg = _clip_segment(seg, lo, hi)
+        # Commit crossover trims only after the candidate itself has survived
+        # every stronger claim.  A discarded rival must never shorten a chunk
+        # that was already accepted.
+        kept = adjusted
         kept.append(seg)
     return sorted(kept, key=lambda s: s.ep_start)
 

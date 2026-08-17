@@ -218,3 +218,75 @@ def test_coverage_is_preferred_over_chunk_count():
     short_b = Segment(90, 95, 10, 15, -80, support=100)
     chain = locate.best_chain([long_one, short_a, short_b])
     assert long_one in chain
+
+
+# --- resolving fingerprint overlaps -----------------------------------------
+
+def test_large_ordered_crossover_keeps_the_later_unique_suffix():
+    """Regression: a repeated arrangement must not erase the song ending.
+
+    These are the rounded raw fingerprint matches from the Duel Masters LOST
+    ending: the first occurrence has slightly more total support, but the second
+    one is the only match that continues to the end of the TV edit.
+    """
+    opening = Segment(0.976, 60.848, 1371.744, 1431.616, 1370.768,
+                      support=4976)
+    ending = Segment(145.024, 185.536, 1415.952, 1456.464, 1270.928,
+                     support=4352)
+
+    out = locate._resolve_overlaps([opening, ending])
+
+    assert len(out) == 2
+    assert out[0].ep_start == opening.ep_start
+    assert out[0].ep_end == ending.ep_start
+    assert out[0].ref_end == pytest.approx(45.184)
+    assert out[1] == ending
+
+
+def test_ordered_crossover_is_independent_of_support_order():
+    """The same splice survives when its later chunk is processed first."""
+    opening = Segment(0, 60, 100, 160, 100, support=800)
+    ending = Segment(150, 190, 145, 185, -5, support=1200)
+
+    out = locate._resolve_overlaps([opening, ending])
+
+    assert [(s.ref_start, s.ref_end, s.ep_start, s.ep_end) for s in out] == [
+        (0, 45, 100, 145),
+        (150, 190, 145, 185),
+    ]
+
+
+def test_plain_forward_jump_without_overlap_is_unchanged():
+    """The resolver does not need repeated material to represent a song cut."""
+    verse = Segment(0, 53, 100, 153, 100, support=900)
+    ending = Segment(152, 185, 153, 186, 1, support=850)
+
+    assert locate._resolve_overlaps([verse, ending]) == [verse, ending]
+
+
+def test_overlapping_reference_claims_still_compete_by_support():
+    """Advancing endpoints alone cannot turn the same song span into a splice."""
+    strong = Segment(0, 60, 100, 160, 100, support=1000)
+    rival = Segment(40, 90, 145, 195, 105, support=900)
+
+    assert locate._resolve_overlaps([strong, rival]) == [strong]
+
+
+def test_tiny_new_tail_does_not_truncate_a_strong_chunk():
+    """A noisy match must contribute a real suffix before it can cause a cut."""
+    strong = Segment(0, 80, 100, 180, 100, support=3000)
+    noisy_tail = Segment(150, 160, 175, 182, 25, support=100)
+
+    assert locate._resolve_overlaps([strong, noisy_tail]) == [strong]
+
+
+def test_rejected_crossover_does_not_modify_an_accepted_chunk():
+    """Crossover clipping is transactional when another match rejects it."""
+    prefix = Segment(0, 60, 0, 60, 0, support=1000)
+    suffix = Segment(130, 170, 60, 100, -70, support=950)
+    # This would extend `prefix`, but it makes a conflicting reference claim
+    # against the already stronger `suffix`, so the candidate must lose without
+    # shortening either accepted chunk.
+    rival = Segment(100, 145, 45, 90, -55, support=900)
+
+    assert locate._resolve_overlaps([prefix, suffix, rival]) == [prefix, suffix]
