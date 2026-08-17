@@ -20,6 +20,29 @@ def release(tag="v1.2.3", assets=()):
     return updater.Release(tag, parsed, "https://example.test/release", tuple(assets))
 
 
+def native_archive(tag="v99.0.0"):
+    """Build a minimal release archive for the platform running the test."""
+    suffix = updater.platform_asset_suffix()
+    assert suffix is not None
+    name = f"aksal-{tag}{suffix}"
+    executable = "aksal.exe" if sys.platform == "win32" else "aksal"
+    archive = io.BytesIO()
+    if suffix.endswith(".zip"):
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr(executable, b"new exe")
+            bundle.writestr("_internal/library.dll", b"new library")
+    else:
+        with tarfile.open(fileobj=archive, mode="w:gz") as bundle:
+            for member_name, content, mode in (
+                    (f"aksal/{executable}", b"new exe", 0o755),
+                    ("aksal/_internal/library.so", b"new library", 0o644)):
+                info = tarfile.TarInfo(member_name)
+                info.size = len(content)
+                info.mode = mode
+                bundle.addfile(info, io.BytesIO(content))
+    return name, archive.getvalue(), executable
+
+
 @pytest.mark.parametrize("text,expected", [
     ("0.1.0", (0, 1, 0, 0)),
     ("v2.4", (2, 4, 0, 0)),
@@ -136,12 +159,14 @@ def test_sha256_streams_file(tmp_path):
 
 
 def test_notification_uses_fresh_cache_without_network(tmp_path, monkeypatch):
+    suffix = updater.platform_asset_suffix()
+    assert suffix is not None
     cache = tmp_path / "update-check.json"
     cache.write_text(json.dumps({
         "checked_at": updater.time.time(),
         "tag": "v99.0.0",
         "page_url": "https://example.test/release",
-        "asset_names": ["aksal-v99.0.0-windows-x64.zip"],
+        "asset_names": [f"aksal-v99.0.0{suffix}"],
     }), encoding="utf-8")
     monkeypatch.setattr(updater, "_check_cache_path", lambda: cache)
     monkeypatch.setattr(updater, "fetch_latest",
@@ -171,20 +196,16 @@ def test_manifest_is_sorted_and_covers_top_level_payload(tmp_path):
 
 def test_install_latest_stages_verified_bundle_before_handoff(
         tmp_path, monkeypatch):
-    archive_bytes = io.BytesIO()
-    with zipfile.ZipFile(archive_bytes, "w") as bundle:
-        bundle.writestr("aksal.exe", b"new exe")
-        bundle.writestr("_internal/library.dll", b"new dll")
-    content = archive_bytes.getvalue()
+    asset_name, content, executable = native_archive()
     asset = {
-        "name": "aksal-v99.0.0-windows-x64.zip",
-        "browser_download_url": "https://example.test/aksal.zip",
+        "name": asset_name,
+        "browser_download_url": "https://example.test/aksal-archive",
         "digest": "sha256:" + hashlib.sha256(content).hexdigest(),
     }
     latest = release("v99.0.0", [asset])
     install = tmp_path / "installed"
     (install / "_internal").mkdir(parents=True)
-    (install / "aksal.exe").write_bytes(b"old exe")
+    (install / executable).write_bytes(b"old exe")
     cache = tmp_path / "cache"
     handed_off = {}
 
@@ -206,8 +227,8 @@ def test_install_latest_stages_verified_bundle_before_handoff(
     messages = []
     assert updater.install_latest(log=messages.append)
     assert handed_off["root"] == install
-    assert (handed_off["payload"] / "aksal.exe").read_bytes() == b"new exe"
-    assert handed_off["names"] == ["_internal", "aksal.exe"]
+    assert (handed_off["payload"] / executable).read_bytes() == b"new exe"
+    assert handed_off["names"] == ["_internal", executable]
     assert handed_off["tag"] == "v99.0.0"
     assert not (handed_off["work"] / asset["name"]).exists()
     assert any("will be installed" in message for message in messages)
