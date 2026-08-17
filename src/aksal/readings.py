@@ -66,7 +66,10 @@ def tagger_args(dicdir: str | Path) -> str:
     literal double quote in a path cannot be handled and cannot occur: Windows
     forbids the character in filenames outright.
     """
-    return f'-d "{Path(dicdir).as_posix()}"'
+    # Path.as_posix() only converts separators native to the host.  A Windows
+    # path passed through a Linux runner therefore keeps its backslashes, even
+    # though MeCab expects this argument in its portable slash form.
+    return f'-d "{str(dicdir).replace(chr(92), "/")}"'
 
 
 # Furigana as lyric sheets print it: kanji, then a parenthesised all-kana gloss.

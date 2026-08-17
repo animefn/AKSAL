@@ -28,9 +28,9 @@ jobs:
   windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip
@@ -51,9 +51,9 @@ jobs:
         run: pytest -q
 
       - name: Build
-        run: python packaging/build_windows.py
+        run: python packaging/build.py
 
-      # build_windows.py already runs the executable and fails if it does not
+      # build.py already runs the executable and fails if it does not
       # start -- two earlier builds exited 0 and produced a binary that died on
       # its first import, so "the build succeeded" is not evidence of anything.
 
@@ -64,7 +64,7 @@ jobs:
           Compress-Archive -Path dist/aksal/* -DestinationPath "aksal-$tag-windows-x64.zip"
           Get-Item "aksal-$tag-windows-x64.zip" | Select-Object Name, @{n="MB";e={[int]($_.Length/1MB)}}
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: aksal-windows
           path: aksal-*-windows-x64.zip
@@ -80,8 +80,8 @@ jobs:
           Windows build, x64. Unzip and run ``aksal.exe`` from the folder --
           it needs ``_internal\`` beside it.
 
-          The acoustic model (~630 MB) downloads on first run into ``models\``
-          beside the executable, so the folder stays self-contained.
+          The acoustic model (~630 MB) downloads on first use into AKSAL's
+          writable per-user cache (normally ``%LOCALAPPDATA%\AKSAL\cache``).
 
           ``ffmpeg`` is required and ``yt-dlp`` is optional; if either is
           missing the tool offers to fetch it. Vocal separation

@@ -69,7 +69,7 @@ Not bundled. AKSAL finds them on PATH, or offers to download the first two.
 
 | | | licence |
 |---|---|---|
-| [ffmpeg](https://ffmpeg.org/) | all audio decoding. Static builds fetched from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | LGPL-2.1+ / GPL-2+ depending on build |
+| [ffmpeg](https://ffmpeg.org/) | all audio decoding. LGPL static builds fetched on Windows/Linux from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) | LGPL-2.1+ |
 | [yt-dlp](https://github.com/yt-dlp/yt-dlp) | fetches a reference track for `aksal find` | Unlicense |
 | [demucs](https://github.com/adefossez/demucs) | optional vocal separation (`--separate-audio`) | MIT |
 

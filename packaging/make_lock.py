@@ -35,6 +35,22 @@ def requirement_names(spec: str) -> str:
     return canonical(spec)
 
 
+def lock_line(name: str, installed: str) -> str:
+    """A reproducible pin that remains installable on every supported OS."""
+    # PyTorch's CPU repository publishes local versions such as 2.11.0+cpu,
+    # while macOS publishes the same public version without that suffix. A pin
+    # to the public version selects the measured CPU wheel on Windows/Linux and
+    # the matching native wheel on macOS.
+    if name in {"torch", "torchaudio"}:
+        installed = installed.split("+", 1)[0]
+    markers = {
+        "pefile": "sys_platform == 'win32'",
+        "pywin32-ctypes": "sys_platform == 'win32'",
+    }
+    line = f"{name}=={installed}"
+    return f"{line}; {markers[name]}" if name in markers else line
+
+
 def walk(roots: list[str]) -> dict[str, str]:
     """Every distribution reachable from `roots`, with its installed version."""
     seen: dict[str, str] = {}
@@ -87,7 +103,10 @@ def main() -> int:
         "#       --extra-index-url https://download.pytorch.org/whl/cpu",
         "",
     ]
-    lines += [f"{name}=={ver}" for name, ver in sorted(resolved.items())]
+    lines += [lock_line(name, ver) for name, ver in sorted(resolved.items())]
+    # PyInstaller requires this only on macOS, so a Windows-generated lock
+    # cannot discover it by walking the active environment.
+    lines.append("macholib==1.16.3; sys_platform == 'darwin'")
     out = ROOT / "requirements.lock"
     out.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {out.name}: {len(resolved)} packages pinned")

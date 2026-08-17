@@ -11,11 +11,11 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest        # 1x minutes; the tests are platform-agnostic
+    runs-on: ubuntu-22.04         # also the oldest supported Linux build base
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
           cache: pip

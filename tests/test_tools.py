@@ -85,3 +85,37 @@ def test_use_path_rejects_a_folder_without_both_binaries(tmp_path, monkeypatch):
     (tmp_path / f"ffmpeg{'.exe' if os.name == 'nt' else ''}").write_text("")
     monkeypatch.setattr(tools, "_works", lambda p: True)
     assert not tools.use_path(str(tmp_path), log=lambda *a, **k: None)
+
+
+def test_a_nonzero_version_probe_is_not_a_working_tool(monkeypatch):
+    class Result:
+        returncode = 7
+
+    monkeypatch.setattr(tools.subprocess, "run", lambda *a, **k: Result())
+    assert not tools._works("not-really-ffmpeg")
+
+
+@pytest.mark.parametrize("host,machine,ffmpeg_asset,yt_asset", [
+    ("win32", "AMD64", "ffmpeg-master-latest-win64-lgpl.zip",
+     "yt-dlp.exe"),
+    ("linux", "x86_64", "ffmpeg-master-latest-linux64-lgpl.tar.xz",
+     "yt-dlp_linux"),
+    ("linux", "aarch64", "ffmpeg-master-latest-linuxarm64-lgpl.tar.xz",
+     "yt-dlp_linux_aarch64"),
+    ("darwin", "arm64", None, "yt-dlp_macos"),
+])
+def test_download_assets_match_the_host(monkeypatch, host, machine,
+                                        ffmpeg_asset, yt_asset):
+    monkeypatch.setattr(tools.sys, "platform", host)
+    monkeypatch.setattr(tools.platform, "machine", lambda: machine)
+    assert tools.ffmpeg_asset() == ffmpeg_asset
+    assert tools.ytdlp_asset() == yt_asset
+
+
+def test_user_data_and_cache_can_be_placed_explicitly(tmp_path, monkeypatch):
+    data = tmp_path / "data"
+    cache = tmp_path / "cache"
+    monkeypatch.setenv("AKSAL_HOME", str(data))
+    monkeypatch.setenv("AKSAL_CACHE_HOME", str(cache))
+    assert tools.home() == data
+    assert tools.cache_home() == cache

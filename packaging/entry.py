@@ -9,7 +9,6 @@ from __future__ import annotations
 import multiprocessing
 import os
 import sys
-from pathlib import Path
 
 
 def main() -> int:
@@ -17,11 +16,13 @@ def main() -> int:
     # re-executes the bundle and the process forks endlessly.
     multiprocessing.freeze_support()
 
-    # Keep models beside the executable rather than in the user profile, so the
-    # whole tool is one movable folder. Honour an existing HF_HOME if the user
-    # has deliberately set one.
+    # /Applications, /usr/local and managed Windows installations may all be
+    # read-only. Honour an explicit HF_HOME; otherwise use the native writable
+    # user cache selected by AKSAL.
     if getattr(sys, "frozen", False) and not os.environ.get("HF_HOME"):
-        os.environ["HF_HOME"] = str(Path(sys.executable).parent / "models")
+        from aksal.tools import cache_home
+
+        os.environ["HF_HOME"] = str(cache_home() / "huggingface")
 
     if os.environ.get("AKSAL_PACKAGING_SMOKE") == "1":
         import demucs.api as demucs_api

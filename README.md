@@ -91,10 +91,15 @@ splits match by construction rather than by coincidence. Phase 2 asserts this an
 
 For non-technical people, the easiest way is of course to download it from the releases page.
 
-We provide a Windows build ready to use. It will need to download some "models" the first time you launch it; these are necessary for AKSAL to work and may require up to 3 GB in total.
+We provide a Windows build ready to use. A tested Linux x64 archive is also
+produced by the manual `build-linux` GitHub Actions workflow. Both need to
+download models on first use; these are necessary for AKSAL and may require up
+to 3 GB in total.
 
 For people who want to play with the code:
-Requires **Python 3.10+**, plus `ffmpeg` and `ffprobe` on `PATH`.
+Requires **Python 3.10+**, plus `ffmpeg` and `ffprobe` on `PATH`. Packaged
+Windows and Linux builds can offer the matching static FFmpeg build if it is
+missing; on macOS, install it with `brew install ffmpeg`.
 
 ```bash
 git clone https://github.com/animefn/AKSAL.git
@@ -104,14 +109,15 @@ pip install -e .
 
 Verified on Python 3.13, including `demucs`.
 
-The packaged Windows build ships demucs inside it, so `--separate-audio` works
+Packaged builds ship demucs, so `--separate-audio` works
 out of the box; its model weights (~80 MB) download once on first use, like the
 acoustic model. On a pip install, separation is an extra:
 `pip install aksal[separate]` (or just `pip install demucs`).
 
-The acoustic model downloads on first run (~630 MB), is cached, and is shared
-across every song. Everything else a run produces is contained in its output
-directory.
+The acoustic model downloads on first run (~630 MB), is cached in the native
+per-user cache, and is shared across every song. Set `AKSAL_CACHE_HOME` to put
+it elsewhere. Configuration and downloaded helper programs use `AKSAL_HOME`;
+project artifacts remain contained in the selected output directory.
 
 `--model` accepts any other CTC model that emits kana, as a Hugging Face id or a
 checkpoint path. The three things the pipeline actually requires -- a kana
@@ -476,7 +482,7 @@ the waveform, starting with whatever phase 1 flagged.
 
 ## Releases
 
-Windows builds are produced by GitHub Actions from a tag:
+Windows release builds are produced by GitHub Actions from a tag:
 
 ```bash
 git tag v0.1.0 && git push origin v0.1.0
@@ -486,8 +492,10 @@ That is the whole ritual — the tag names the release, the archive and the
 version. Tests run first, and the build refuses to publish anything whose
 executable does not start.
 
-`.github/workflows/tests.yml` runs the suite on every push; the release
-workflow is separate because Windows runners are slower and billed at double.
+`.github/workflows/tests.yml` runs the suite on every push. The manual
+`build-linux` workflow creates and smoke-tests a Linux x64 `.tar.gz` artifact
+without publishing a release. Both native builds use `python packaging/build.py`;
+PyInstaller must run on the target operating system and does not cross-compile.
 
 ---
 
@@ -590,4 +598,7 @@ text-to-text problem, where skipping is free.
 
 **More ground truth.** Every segmentation rule here is validated against roughly 700 words of hand-timed karaoke. We hope to improve this in the future with bug-reports and more testing.
 
-**Cross-platform builds.** Windows only today. Hoping to provide mac and linux builds in the future. 
+**Cross-platform builds.** Windows releases and Linux x64 CI artifacts have
+native build paths. Runtime storage and helper-tool selection also support
+macOS; a distributable macOS application still needs a native build plus Apple
+code-signing and notarization credentials.

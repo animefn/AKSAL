@@ -95,7 +95,8 @@ aksal find --anime "Duel Masters LOST" --video EP01.mkv --ed \
     --song-start 21:30 --pick 1 --yes --run
 ```
 
-Needs `yt-dlp` on PATH (`pip install -U yt-dlp`). It is optional, and never
+Needs `yt-dlp`. If it is not on PATH, AKSAL offers to download the native
+standalone executable or lets you point at one. It is optional and never
 auto-updated — a dependency that changes itself mid-run changes your results
 silently.
 
@@ -219,7 +220,7 @@ every dictionary lists those as single entries, so a short list rejoins them:
 boundaries move; the syllables and the `\k` values do not.
 
 That list is a convention rather than a fact, so it is editable. Put
-`aksal.phrases.tsv` beside the executable (or in `~/.aksal`), two tab-separated
+`aksal.phrases.tsv` in AKSAL's per-user data directory, two tab-separated
 columns -- the phrase, and a reading only when concatenating the parts would be
 wrong. `DELETE` in the second column removes a built-in entry:
 

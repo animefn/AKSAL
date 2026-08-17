@@ -171,3 +171,27 @@ def test_the_anime_name_is_used_when_the_artist_is_unknown():
     assert fetch.normalise_query("TRUTH", "", "Cross Fight B-Daman") == \
         "Cross Fight B-Daman TRUTH"
     assert fetch.normalise_query("TRUTH", "Rin", "Cross Fight B-Daman") == "Rin TRUTH"
+
+
+def test_search_invokes_the_resolved_ytdlp_binary(monkeypatch):
+    seen = []
+    monkeypatch.setattr(fetch, "require_ytdlp", lambda: "/opt/aksal/yt-dlp")
+    monkeypatch.setattr(fetch, "_run",
+                        lambda args, timeout=0: seen.append(args) or "")
+    fetch.search("a song")
+    assert seen[0][0] == "/opt/aksal/yt-dlp"
+
+
+def test_download_invokes_the_resolved_ytdlp_binary(tmp_path, monkeypatch):
+    seen = []
+    monkeypatch.setattr(fetch, "require_ytdlp", lambda: "/opt/aksal/yt-dlp")
+
+    def fake_run(args, timeout=0):
+        seen.append(args)
+        (tmp_path / "reference.m4a").write_bytes(b"audio")
+        return ""
+
+    monkeypatch.setattr(fetch, "_run", fake_run)
+    assert fetch.download_audio("https://example.test/song",
+                                tmp_path / "reference.m4a").exists()
+    assert seen[0][0] == "/opt/aksal/yt-dlp"

@@ -19,10 +19,11 @@ from __future__ import annotations
 
 import json
 import re
-import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+
+from . import tools
 
 MIN_SUPPORT = 400          # a real match scores thousands; noise scores tens
 MIN_COVER_SEC = 20.0       # a TV size is ~90s, so 20s of agreement is plenty
@@ -50,17 +51,22 @@ class FetchError(RuntimeError):
 
 
 def have_ytdlp() -> bool:
-    return shutil.which("yt-dlp") is not None
+    return tools.ytdlp() is not None
 
 
-def require_ytdlp() -> None:
-    if not have_ytdlp():
+def require_ytdlp() -> str:
+    """Return the resolved executable, offering AKSAL's downloader once."""
+    executable = tools.ytdlp()
+    if executable is None and tools.ensure_ytdlp():
+        executable = tools.ytdlp()
+    if executable is None:
         raise FetchError(
-            "yt-dlp is not on PATH.\n"
+            "yt-dlp was not found.\n"
             "  It is an optional dependency, used only to fetch a reference "
             "track.\n"
             "    pip install -U yt-dlp\n"
             "  Or download the song yourself and pass --reference FILE.")
+    return executable
 
 
 def _run(args: list[str], timeout: float = 300) -> str:
@@ -113,8 +119,8 @@ def plausible(candidates: list[Candidate], want: float | None = None,
 
 
 def search(query: str, limit: int = 8) -> list[Candidate]:
-    require_ytdlp()
-    out = _run(["yt-dlp", f"ytsearch{limit}:{query}", "--flat-playlist",
+    executable = require_ytdlp()
+    out = _run([executable, f"ytsearch{limit}:{query}", "--flat-playlist",
                 "--no-warnings", "--print",
                 '{"id":%(id)j,"title":%(title)j,"uploader":%(uploader)j,'
                 '"duration":%(duration)j}'], timeout=120)
@@ -129,12 +135,12 @@ def download_audio(ident_or_url: str, dest: Path) -> Path:
     `.reference` as the suffix, so it silently produces `OP.lines.m4a` and every
     download then appears to vanish.
     """
-    require_ytdlp()
+    executable = require_ytdlp()
     dest.parent.mkdir(parents=True, exist_ok=True)
     base = str(dest)
     if base.lower().endswith(".m4a"):
         base = base[:-4]
-    _run(["yt-dlp", "-f", "bestaudio", "-x", "--audio-format", "m4a",
+    _run([executable, "-f", "bestaudio", "-x", "--audio-format", "m4a",
           "--audio-quality", "0", "--no-warnings",
           "-o", base + ".%(ext)s", ident_or_url], timeout=600)
     got = Path(base + ".m4a")
