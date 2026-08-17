@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 
 from aksal.locate import Segment
-from aksal.project import Project, STATE_NAME, default_output_dir
+from aksal.project import Project, STATE_NAME, default_output_dir, project_name
 
 
 def make(root=Path("D:/karaoke/OP01.aksal"), **values):
@@ -18,15 +18,24 @@ def test_default_directory_is_beside_the_input():
         "D:/shows/S01.E01.aksal")
 
 
+def test_artifact_name_is_consistent_for_inputs_and_project_directories():
+    assert project_name(Path("OP01.aksal")) == "OP01"
+    assert project_name(Path("OP01.lines.ass")) == "OP01"
+    assert default_output_dir(Path("D:/kara/OP01.lines.ass")) == Path(
+        "D:/kara/OP01.aksal")
+
+
 def test_artifacts_have_clear_subdirectories():
     project = make()
     assert project.state == project.root / "project.json"
-    assert project.lines_file == project.root / "lines.ass"
+    assert project.lines_file == project.root / "OP01.lines.ass"
     assert project.readings == project.root / "readings.tsv"
     assert project.vocals == project.root / "audio" / "vocals.wav"
     assert project.emissions_cache_for("abc") == (
         project.root / "cache" / "emissions" / "abc.pt")
-    assert project.output_dir == project.root / "output"
+    assert project.kara_jp_file == project.root / "OP01.kara.jp.ass"
+    assert project.kara_kana_file == project.root / "OP01.kara.kana.ass"
+    assert project.kara_romaji_file == project.root / "OP01.kara.romaji.ass"
 
 
 def test_save_creates_the_complete_layout(tmp_path):
@@ -35,7 +44,7 @@ def test_save_creates_the_complete_layout(tmp_path):
     assert project.state.exists()
     assert project.audio_dir.is_dir()
     assert project.emissions_dir.is_dir()
-    assert project.output_dir.is_dir()
+    assert not (project.root / "output").exists()
 
 
 def test_round_trip(tmp_path):

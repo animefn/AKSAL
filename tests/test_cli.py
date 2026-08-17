@@ -13,12 +13,25 @@ from __future__ import annotations
 
 import pytest
 
-from aksal.cli import build_parser
+from aksal.cli import build_parser, display_command, display_reading
 
 
 def flags(command: str) -> dict:
     sub = build_parser()._subparsers._group_actions[0].choices[command]
     return {opt: a for a in sub._actions for opt in a.option_strings}
+
+
+def test_displayed_phase2_command_quotes_paths_with_spaces():
+    arguments = ["aksal", "phase2", "D:/My Karaoke/OP01.lines.ass"]
+    assert display_command(arguments, windows=True) == (
+        'aksal phase2 "D:/My Karaoke/OP01.lines.ass"')
+    assert display_command(arguments, windows=False) == (
+        "aksal phase2 'D:/My Karaoke/OP01.lines.ass'")
+
+
+def test_display_reading_adds_aksal_romaji():
+    assert display_reading("いまだ") == "いまだ [imada]"
+    assert display_reading("えい えん") == "えい えん [ei en]"
 
 
 def test_the_three_commands_exist():

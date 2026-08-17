@@ -12,6 +12,8 @@ hard constraints rather than suggestions.
 from __future__ import annotations
 
 import argparse
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
@@ -40,16 +42,24 @@ DEFAULT_DURATION = 92.0
 # full 4-minute sheet against a TV size needs 2-3x the window. So between 0.55
 # and 1.0 the run continues with a loud warning, and above 1.0 it stops.
 WARN_FIT = 0.55
-LINE_ID_PREFIX = "aksal-line:"
 
 
-def event_line_id(event: ass.Event, fallback: int) -> int:
-    if event.effect.startswith(LINE_ID_PREFIX):
-        try:
-            return int(event.effect[len(LINE_ID_PREFIX):])
-        except ValueError:
-            pass
-    return fallback
+def display_command(arguments: list[str], *, windows: bool | None = None) -> str:
+    """Render a copyable command without ever executing it."""
+    if windows is None:
+        windows = sys.platform == "win32"
+    return (subprocess.list2cmdline(arguments) if windows
+            else shlex.join(arguments))
+
+
+def display_reading(reading: str) -> str:
+    """Kana plus the same modified-Hepburn romaji AKSAL emits."""
+    cells: list[str] = []
+    for word_index, word in enumerate(reading.split()):
+        if word_index:
+            cells.append(" ")
+        cells.extend(romaji.line(moras.split(word)))
+    return f"{reading} [{''.join(cells)}]"
 
 
 def check_fits_window(n_units: int, window: float, log=print) -> None:
@@ -170,7 +180,7 @@ def cmd_phase1(args) -> None:
     root.mkdir(parents=True, exist_ok=True)
     audio_dir = root / "audio"
     audio_dir.mkdir(parents=True, exist_ok=True)
-    out_lines = root / "lines.ass"
+    out_lines = root / f"{project_mod.project_name(root)}.lines.ass"
 
     reference = resolve_media(
         args.reference, audio_dir / "reference.m4a", log=log)
@@ -541,9 +551,20 @@ def cmd_phase1(args) -> None:
             start=start - args.lead_in,
             end=max(end, start + 0.4) - args.lead_in,
             text=romaji.annotate(surface_of[line_no], romaji_of.get(line_no, "")),
-            style="KARA-JP", effect=f"{LINE_ID_PREFIX}{line_no}")
+            style="KARA-JP")
         events.append(event)
         event_at[line_no] = event
+
+    # The TSV line id is the line's position in the emitted ASS.  Numbering
+    # only lines that survived the cut makes the same identity available to
+    # phase 2 without smuggling private metadata into Aegisub's Effect field.
+    events.sort(key=lambda event: event.start)
+    position_of = {id(event): position
+                   for position, event in enumerate(events, 1)}
+    output_line_id = {
+        source_line: position_of[id(event)]
+        for source_line, event in event_at.items()
+    }
 
     if not events:
         raise SystemExit("nothing landed inside the song window -- check "
@@ -555,6 +576,8 @@ def cmd_phase1(args) -> None:
     unclear: list[tuple] = []
     notes: list[ass.Event] = []
     for line_no, surface, reading in rows:
+        if line_no not in output_line_id:
+            continue
         grp = group_of.get(line_no)
         flag = readings.flags_for(surface, reading, script)
         if grp:
@@ -566,7 +589,7 @@ def cmd_phase1(args) -> None:
         selected = selections.get(line_no)
         for decision in selected.decisions if selected else ():
             _top_reading, top_probability = decision.ranked[0]
-            alternatives = "/".join(r for r, _p in decision.ranked)
+            alternatives = tuple(r for r, _p in decision.ranked)
             if decision.changed:
                 decided_by_audio.append(
                     (line_no, decision.surface, decision.current,
@@ -581,8 +604,8 @@ def cmd_phase1(args) -> None:
                      alternatives, top_probability))
                 flag = ",".join(filter(None, [
                     flag,
-                    f"unclear?{decision.surface}:{alternatives}"]))
-        table.append((line_no, flag, surface, reading))
+                    f"unclear?{decision.surface}:{'/'.join(alternatives)}"]))
+        table.append((output_line_id[line_no], flag, surface, reading))
 
     # One comment per note, on the line it belongs to. These render nothing --
     # Aegisub shows them in the grid and libass ignores them -- so the karaoke
@@ -592,15 +615,18 @@ def cmd_phase1(args) -> None:
         if ev:
             notes.append(ass.Event(
                 start=ev.start, end=ev.end, style=ev.style, comment=True,
-                text=f"AKSAL: audio chose {surf} = {now} (not {was}), "
+                text=f"AKSAL: audio chose {surf} = {display_reading(now)} "
+                     f"(not {display_reading(was)}), "
                      f"{probability:.1%}, {certainty}"))
     for line_no, surf, ours_r, alternatives, probability in unclear:
         ev = event_at.get(line_no)
         if ev:
             notes.append(ass.Event(
                 start=ev.start, end=ev.end, style=ev.style, comment=True,
-                text=f"AKSAL: {surf} candidates {alternatives}; kept "
-                     f"{ours_r} (top {probability:.1%}, uncertain)"))
+                text=f"AKSAL: {surf} candidates "
+                     f"{' / '.join(display_reading(r) for r in alternatives)}; "
+                     f"kept {display_reading(ours_r)} "
+                     f"(top {probability:.1%}, uncertain)"))
 
     ass.write(out_lines, events + notes, [ass.STYLE_JP], project=root)
     readings.write_table(proj.readings, table)
@@ -618,7 +644,8 @@ def cmd_phase1(args) -> None:
         log(f"\nthe audio settled {len(decided_by_audio)} reading(s) "
             f"against the dictionary:")
         for line_no, surf, was, now, probability, certainty in decided_by_audio[:12]:
-            log(f"  line {line_no}: {surf}  {was} -> {now}  "
+            log(f"  line {line_no}: {surf}  {display_reading(was)} -> "
+                f"{display_reading(now)}  "
                 f"({probability:.1%}, {certainty})")
         if len(decided_by_audio) > 12:
             log(f"  ... and {len(decided_by_audio) - 12} more")
@@ -626,8 +653,9 @@ def cmd_phase1(args) -> None:
         log(f"\n{len(unclear)} reading(s) have a plausible alternative the "
             f"audio could not settle -- the dictionary's choice was kept:")
         for line_no, surf, ours_r, alternatives, probability in unclear[:12]:
-            log(f"  line {line_no}: {surf}  kept {ours_r}; "
-                f"candidates {alternatives}  (top {probability:.1%})")
+            shown = " / ".join(display_reading(r) for r in alternatives)
+            log(f"  line {line_no}: {surf}  kept {display_reading(ours_r)}; "
+                f"candidates {shown}  (top {probability:.1%})")
         if len(unclear) > 12:
             log(f"  ... and {len(unclear) - 12} more")
     if decided_by_audio or unclear:
@@ -645,8 +673,8 @@ def cmd_phase1(args) -> None:
     if flagged:
         log(f"\n{len(flagged)} reading(s) worth checking: "
             f"{', '.join(str(t[0]) for t in flagged)}")
-    log(f"\nNext: fix the lines in Aegisub, then run\n"
-        f"  aksal phase2 {out_lines}")
+    command = display_command(["aksal", "phase2", str(out_lines)])
+    log(f"\nNext: fix the lines in Aegisub, then run\n  {command}")
 
 
 # =============================================================================
@@ -682,7 +710,8 @@ def resolve_project_root(lines_file: Path, explicit: Path | None) -> Path:
         f"beside it\n\n"
         "  If this subtitle was made by hand rather than by phase1, pass\n"
         "  --video (and --reference if you have the clean track):\n"
-        f"    aksal phase2 {lines_file} --video EPISODE.mkv")
+        f"    {display_command(['aksal', 'phase2', str(lines_file),
+                               '--video', 'EPISODE.mkv'])}")
 
 
 def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Project:
@@ -794,7 +823,8 @@ def cmd_phase2(args) -> None:
                 f"{exc}\n\n"
                 "  If this subtitle was made by hand rather than by phase1,\n"
                 "  pass --video (and --reference if you have the clean track):\n"
-                f"    aksal phase2 {lines_file} --video EPISODE.mkv")
+                f"    {display_command(['aksal', 'phase2', str(lines_file),
+                                         '--video', 'EPISODE.mkv'])}")
 
     # Command-line role flags override saved project choices. The general
     # --model applies to both roles; a role-specific flag wins over it.
@@ -878,7 +908,7 @@ def cmd_phase2(args) -> None:
     if proj.lyrics_source != "romaji":
         for event_index, event in enumerate(events):
             surface = readings.normalise_surface(event.plain)
-            line_id = event_line_id(event, event_index + 1)
+            line_id = event_index + 1
             if not surface or overrides.get_for(line_id, surface) is not None:
                 continue
             words = readings.analyse_words(surface)
@@ -960,7 +990,7 @@ def cmd_phase2(args) -> None:
         surface = ev.plain
         if not surface:
             continue
-        line_id = event_line_id(ev, event_index + 1)
+        line_id = event_index + 1
         manual = overrides.get_for(line_id, surface)
         line_overrides = ({readings.normalise_surface(surface): manual}
                           if manual else {})
@@ -1050,12 +1080,11 @@ def cmd_phase2(args) -> None:
         log(f"  snapped {snapped} mora start(s) to onsets")
     log("")
     if "jp" in wanted:
-        out_jp = proj.output_dir / (
-            "kara.kana.ass" if kana_only else "kara.jp.ass")
+        out_jp = proj.kara_kana_file if kana_only else proj.kara_jp_file
         ass.write(out_jp, jp_events, [ass.STYLE_JP], project=proj.root)
         log(f"wrote {out_jp}")
     if "romaji" in wanted:
-        out_ro = proj.output_dir / "kara.romaji.ass"
+        out_ro = proj.kara_romaji_file
         ass.write(out_ro, ro_events, [ass.STYLE_RO], project=proj.root)
         log(f"wrote {out_ro}")
 
@@ -1080,13 +1109,14 @@ def build_parser() -> argparse.ArgumentParser:
     p1 = sub.add_parser("phase1", help="produce timed lines for you to correct")
     p1.add_argument("--video", required=True, type=Path)
     p1.add_argument("-o", "--output-dir", type=Path, default=None,
-                    help="project directory for lines, editable readings, "
-                         "audio, caches and karaoke output. Default: "
+                    help="project directory (not an ASS filename) for lines, "
+                         "editable readings, audio, caches and karaoke. Default: "
                          "<video>.aksal beside the video.")
     p1.add_argument("--lyrics", required=True,
-                    help="a local file, a Uta-Net song URL, or a search term "
-                         "for LRCLIB. Whatever the source, the text is cached "
-                         "into the project so you can correct it by hand.")
+                    help="a local file, a Uta-Net or LRCLIB track URL, or a "
+                         "search term for LRCLIB. Whatever the source, the "
+                         "text is cached into the project so you can correct "
+                         "it by hand.")
     p1.add_argument("--insert-romaji", action=argparse.BooleanOptionalAction,
                     default=True,
                     help="prefix each line with its romaji as {*RO*...*RO*}. "
@@ -1169,9 +1199,10 @@ def build_parser() -> argparse.ArgumentParser:
                          "of the video's own audio (better, needs the song). "
                          "A local file or a URL for yt-dlp, as in phase1.")
     p2.add_argument("-o", "--output-dir", type=Path,
-                    help="project directory. Normally inferred from the lines "
-                         "file; required to choose a location for a hand-made "
-                         "subtitle when the default is unsuitable.")
+                    help="project directory, not an ASS filename. Normally "
+                         "inferred from the lines file; required to choose a "
+                         "location for a hand-made subtitle when the default "
+                         "is unsuitable.")
     p2.add_argument("--snap", action="store_true", default=True,
                     help="snap mora starts to energy onsets (default: on)")
     p2.add_argument("--no-snap", dest="snap", action="store_false")
@@ -1259,7 +1290,9 @@ def cmd_find(args) -> None:
         log("  lookup only: no --video, so no reference track can be verified")
 
     duration = args.duration if args.duration is not None else DEFAULT_DURATION
-    found = discover.run(args.anime, video, root / "lines.ass", kind=args.kind,
+    found = discover.run(
+        args.anime, video,
+        root / f"{project_mod.project_name(root)}.lines.ass", kind=args.kind,
                          song_start=args.song_start, duration=duration,
                          auto=args.yes, pick=args.pick, log=log)
 

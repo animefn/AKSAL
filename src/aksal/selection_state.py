@@ -166,9 +166,8 @@ def manual_overrides(table: Path, state: dict) -> ManualOverrides:
                     f"{reading!r}. Use hiragana and spaces only.")
             by_line[(line_number, surface)] = reading
             surface_values.setdefault(surface, set()).add(reading)
-    # A unique reading remains usable if the user reordered the ASS. When two
-    # identical surfaces were deliberately given different readings, only the
-    # stable aksal-line identity may choose between them.
+    # A unique reading remains usable if the user reordered the ASS. Identical
+    # surfaces stay independent by their generated dialogue-line positions.
     by_surface = {
         surface: next(iter(values))
         for surface, values in surface_values.items()

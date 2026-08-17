@@ -11,7 +11,7 @@ The tool supersedes our previous [ksplitter](https://github.com/animefn/ksplitte
 ```bash
 aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference song.flac -o OP01.aksal
 # fix the lines in Aegisub, then
-aksal phase2 OP01.aksal/lines.ass
+aksal phase2 OP01.aksal/OP01.lines.ass
 ```
 
 *أكسل — "lazier"*
@@ -128,21 +128,23 @@ one fails silently rather than loudly.
 ```
 D:/Mykaraoke/OP01.aksal/
     project.json
-    lines.ass               <- you edit this
+    OP01.lines.ass          <- you edit this
+    OP01.kara.jp.ass        <- phase 2 output
+    OP01.kara.romaji.ass
     lyrics.txt              <- fetched lyrics, editable
     readings.tsv            <- reading overrides, editable
     selections.json         <- reusable audio reading decisions
     audio/                  <- reference/window/vocal derivatives
     cache/emissions/        <- model emissions
-    output/kara.jp.ass      <- phase 2 output
-    output/kara.romaji.ass
 ```
 
 The caches live here too, deliberately. They are large, but they belong to one
 song and are worthless once you are done with it, so you can delete them once you have finished your work on that specific song.
 
-Phase 2 needs no arguments beyond `lines.ass`; it finds `project.json` in the
-same directory.
+Phase 2 needs no arguments beyond `OP01.lines.ass`; it finds `project.json` in
+the same directory. `-o/--output-dir` always names that directory, not an ASS
+filename. The directory name (without a trailing `.aksal`) becomes the common
+artifact name.
 
 ---
 
@@ -210,12 +212,13 @@ aksal phase1 \
     -o          D:/karaoke/OP01.aksal
 
 # fix the lines in Aegisub, then
-aksal phase2 D:/karaoke/OP01.aksal/lines.ass
+aksal phase2 D:/karaoke/OP01.aksal/OP01.lines.ass
 ```
 
-`--lyrics` takes a **local file**, a **Uta-Net song URL**, or a **search term
-for LRCLIB** — whatever it resolves to is cached beside your output so you can
-correct it by hand. `--reference` likewise takes a **local file or a URL** —
+`--lyrics` takes a **local file**, a **Uta-Net song URL**, an **LRCLIB track
+URL**, or a **search term for LRCLIB** — whatever it resolves to is cached
+beside your output so you can correct it by hand. `--reference` likewise takes
+a **local file or a URL** —
 anything yt-dlp understands — downloaded once and cached beside the output:
 
 ```bash
@@ -301,7 +304,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | flag | default | meaning |
 |---|---|---|
 | `--video PATH` | required | Video containing the song. |
-| `--lyrics SOURCE` | required | A local file, a Uta-Net song URL, or a search term for LRCLIB. Cached beside your output for hand-correction. |
+| `--lyrics SOURCE` | required | A local file, a Uta-Net or LRCLIB track URL, or a search term for LRCLIB. Cached beside your output for hand-correction. |
 | `-o`, `--output-dir PATH` | `<video>.aksal` beside video | Self-contained project directory. |
 | `--reference PATH\|URL` | — | The official track: a local file, or a URL for yt-dlp (cached beside the output). Lets you use the **full** lyric sheet: cut lines drop out automatically. |
 | `--song-start TIME` | — | Roughly where the song starts, e.g. `0:36` or `21:30`. A hint with `--reference`; required and exact-ish without one. |
@@ -428,9 +431,11 @@ affects `--group word` only; syllable grouping, the default, is unaffected.
 
 ### Readings
 
-`readings.tsv`, beside `lines.ass`, is an editable override table. Its line id
-is carried in the ASS Effect field, so two identical lyric lines can safely use
-different readings; unique surfaces can still be matched after reordering.
+`readings.tsv`, beside `OP01.lines.ass`, is an editable override table. Its line
+id is the dialogue line's position in that generated ASS, so two identical
+lyric lines can safely use different readings without writing private metadata
+into the ASS Effect field. Unique surfaces can still be matched after
+reordering.
 
 Fix anything flagged, and anything where the singer uses a non-standard reading.
 On one test song the analyser got **9 of 32 readings wrong**.
@@ -443,7 +448,7 @@ whole line. Where the dictionary knows an alternative, it appears in the
 readings table and as a comment line on that line in the ASS:
 
 ```
-AKSAL: 永遠 could be えいえん or とわ; kept えいえん (margin 2.77, below the threshold)
+AKSAL: 永遠 candidates えいえん [eien] / とわ [towa]; kept えいえん [eien]
 ```
 
 The comments render nothing (libass ignores them) but travel with the file, so

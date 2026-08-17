@@ -15,9 +15,33 @@ SCHEMA_VERSION = 2
 STATE_NAME = "project.json"
 
 
+def project_name(path: Path) -> str:
+    """A stable artifact stem derived from an input or project directory.
+
+    ``-o`` names a directory, commonly ``OP01.aksal``.  Strip only AKSAL's
+    known role suffixes so an input such as ``OP01.lines.ass`` and its default
+    project directory both produce ``OP01.lines.ass`` / ``OP01.kara.jp.ass``.
+    Dots that are genuinely part of a project name are otherwise retained.
+    """
+    name = path.name
+    suffixes = (".ass", ".aksal", ".kara.romaji", ".kara.kana",
+                ".kara.jp", ".lines")
+    changed = True
+    while changed and name:
+        changed = False
+        for suffix in suffixes:
+            if name.casefold().endswith(suffix):
+                name = name[:-len(suffix)]
+                changed = True
+                break
+    return name or path.name
+
+
 def default_output_dir(input_path: Path) -> Path:
     """Return the default project directory beside *input_path*."""
-    return input_path.parent / f"{input_path.stem}.aksal"
+    # The input's own file extension is not part of the project name. Known
+    # role suffixes such as ``.lines`` are then stripped by ``project_name``.
+    return input_path.parent / f"{project_name(input_path.with_suffix(''))}.aksal"
 
 
 @dataclass
@@ -62,7 +86,7 @@ class Project:
 
     @property
     def name(self) -> str:
-        return self.root.name
+        return project_name(self.root)
 
     @property
     def state(self) -> Path:
@@ -82,7 +106,19 @@ class Project:
 
     @property
     def lines_file(self) -> Path:
-        return self.root / "lines.ass"
+        return self.root / f"{self.name}.lines.ass"
+
+    @property
+    def kara_jp_file(self) -> Path:
+        return self.root / f"{self.name}.kara.jp.ass"
+
+    @property
+    def kara_kana_file(self) -> Path:
+        return self.root / f"{self.name}.kara.kana.ass"
+
+    @property
+    def kara_romaji_file(self) -> Path:
+        return self.root / f"{self.name}.kara.romaji.ass"
 
     @property
     def audio_dir(self) -> Path:
@@ -95,10 +131,6 @@ class Project:
     @property
     def emissions_dir(self) -> Path:
         return self.cache_dir / "emissions"
-
-    @property
-    def output_dir(self) -> Path:
-        return self.root / "output"
 
     @property
     def reference_audio(self) -> Path:
@@ -152,7 +184,6 @@ class Project:
         self.root.mkdir(parents=True, exist_ok=True)
         self.audio_dir.mkdir(parents=True, exist_ok=True)
         self.emissions_dir.mkdir(parents=True, exist_ok=True)
-        self.output_dir.mkdir(parents=True, exist_ok=True)
 
     def save(self) -> None:
         """Atomically save project state after creating its directory layout."""

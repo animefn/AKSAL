@@ -82,6 +82,13 @@ def test_ass_event_format_can_be_reordered(tmp_path):
     assert event.effect == "aksal-line:8"
 
 
+def test_generated_ass_does_not_need_an_effect_value(tmp_path):
+    path = tmp_path / "lines.ass"
+    ass.write(path, [ass.Event(1.0, 2.0, "空")], [ass.STYLE_JP])
+    event = ass.read(path)[0]
+    assert event.effect == ""
+
+
 def test_ass_timestamp_rounding_carries_into_next_minute():
     assert ass.ts(59.999) == "0:01:00.00"
 

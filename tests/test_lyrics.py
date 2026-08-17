@@ -157,6 +157,46 @@ def test_longer_lyrics_win_among_equally_synced_entries():
     assert chosen["trackName"] == "long"
 
 
+def test_fetch_direct_lrclib_track_uses_id_endpoint(monkeypatch):
+    requested = []
+
+    def fake_get(url):
+        requested.append(url)
+        return ('{"trackName":"曲","artistName":"歌手",'
+                '"syncedLyrics":"[00:02.50]いち\\n[00:04.00]に"}')
+
+    monkeypatch.setattr(lyrics, "_get", fake_get)
+    result = lyrics.fetch_lrclib_track("37655358")
+    assert requested == ["https://lrclib.net/api/get/37655358"]
+    assert result.lines == ["いち", "に"]
+    assert result.timings == [(2.5, "いち"), (4.0, "に")]
+    assert result.title == "曲"
+    assert result.artist == "歌手"
+
+
+@pytest.mark.parametrize("payload, message", [
+    ('not json', "non-JSON response"),
+    ('[]', "unexpected response"),
+    ('{"instrumental":true}', "instrumental"),
+    ('{"trackName":"empty"}', "no usable lyrics"),
+])
+def test_fetch_direct_lrclib_track_rejects_unusable_responses(
+        monkeypatch, payload, message):
+    monkeypatch.setattr(lyrics, "_get", lambda _url: payload)
+    with pytest.raises(ValueError, match=message):
+        lyrics.fetch_lrclib_track("37655358")
+
+
+@pytest.mark.parametrize("track_id", ["", "0", "-1", "12x"])
+def test_fetch_direct_lrclib_track_validates_id_without_network(
+        monkeypatch, track_id):
+    monkeypatch.setattr(
+        lyrics, "_get",
+        lambda _url: pytest.fail("malformed ids must not reach the network"))
+    with pytest.raises(ValueError, match="invalid LRCLIB track id"):
+        lyrics.fetch_lrclib_track(track_id)
+
+
 # --- resolve dispatch ---------------------------------------------------------
 
 def test_resolve_reads_a_local_file(tmp_path):
@@ -201,6 +241,28 @@ def test_refresh_bypasses_the_cache(tmp_path, monkeypatch):
                        refresh=True, log=lambda *a, **k: None)
     assert r.lines == ["new"]
     assert cache.read_text(encoding="utf-8").strip() == "new"
+
+
+def test_resolve_accepts_direct_lrclib_track_url(monkeypatch):
+    monkeypatch.setattr(
+        lyrics, "fetch_lrclib_track",
+        lambda track_id: lyrics.LyricsResult(
+            lines=["いち"], source=f"lrclib:{track_id}"))
+    result = lyrics.resolve(
+        "https://lrclib.net/tracks/37655358?from=share#lyrics",
+        log=lambda *a, **k: None)
+    assert result.lines == ["いち"]
+    assert result.source == "lrclib:37655358"
+
+
+@pytest.mark.parametrize("url", [
+    "https://lrclib.net/tracks/not-a-number",
+    "https://lrclib.net/tracks/0",
+    "https://lrclib.net/track/37655358",
+])
+def test_resolve_rejects_malformed_lrclib_track_urls(url):
+    with pytest.raises(ValueError, match="invalid LRCLIB track URL"):
+        lyrics.resolve(url, log=lambda *a, **k: None)
 
 
 def test_unsupported_url_is_rejected_by_name(tmp_path):

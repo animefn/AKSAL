@@ -114,13 +114,13 @@ aksal phase1 \
     -o          D:/karaoke/OP01.aksal
 
 # fix the lines in Aegisub, then
-aksal phase2 D:/karaoke/OP01.aksal/lines.ass
+aksal phase2 D:/karaoke/OP01.aksal/OP01.lines.ass
 ```
 
-`--lyrics` also takes a Uta-Net song URL or an LRCLIB search term directly,
-and `--reference` takes a URL for yt-dlp (YouTube etc) as well as a file --
-downloaded once, cached beside the output, and then fingerprint-verified
-exactly like a local file:
+`--lyrics` also takes a Uta-Net song URL, an LRCLIB track URL, or an LRCLIB
+search term directly, and `--reference` takes a URL for yt-dlp (YouTube etc) as
+well as a file -- downloaded once, cached beside the output, and then
+fingerprint-verified exactly like a local file:
 
 ```bash
 aksal phase1 --video EP01.mkv \
@@ -192,15 +192,18 @@ lyrics down.
 ```
 OP01.aksal/
     project.json
-    lines.ass                  <- you edit this
+    OP01.lines.ass             <- you edit this
+    OP01.kara.jp.ass           <- phase 2 output
+    OP01.kara.romaji.ass
     lyrics.txt                 <- fetched lyrics, editable
     readings.tsv               <- reading overrides, editable
     selections.json
     audio/
     cache/emissions/
-    output/kara.jp.ass
-    output/kara.romaji.ass
 ```
+
+`-o/--output-dir` names the directory, not an ASS filename. The directory name
+without a trailing `.aksal` is used for every ASS artifact.
 
 Lyric sheets are normalised before analysis: half-width katakana, full-width
 latin, combining marks and old kanji forms are all folded first. Those failed

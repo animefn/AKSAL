@@ -812,8 +812,8 @@ def write_table(path: Path, rows: list[tuple[int, str, str, str]]) -> None:
         f.write("# line\tflag\tsurface\treading\n")
         f.write("# Fix the `reading` column wherever the flag column is set, and\n")
         f.write("# anywhere the analyser guessed a reading the singer does not use.\n")
-        f.write("# Readings must be hiragana. The line id is carried in the ASS\n")
-        f.write("# Effect field, so repeated identical lines may differ safely.\n")
+        f.write("# Readings must be hiragana. The line id is the dialogue line's\n")
+        f.write("# position in the generated ASS, so repeated text may differ safely.\n")
         f.write("# SPACES IN THE READING MARK WORD BREAKS. They set where the\n")
         f.write("# romaji karaoke puts its spaces; move one to re-split a word.\n")
         for n, flag, surface, reading in rows:

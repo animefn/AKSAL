@@ -65,7 +65,7 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
     project.save()
     ass.write(
         project.lines_file,
-        [ass.Event(1.0, 2.0, "未だ", effect="aksal-line:4")],
+        [ass.Event(1.0, 2.0, "未だ")],
         [ass.STYLE_JP], project=root,
     )
 
@@ -93,7 +93,7 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
     assert FakeAligner.loaded_models == ["selection-model", "timing-model"]
     assert "いまだ" in project.readings.read_text(encoding="utf-8")
     assert project.selections.exists()
-    assert (project.output_dir / "kara.jp.ass").exists()
+    assert project.kara_jp_file.exists()
 
     # The exact same project must use its saved phase-2 decision rather than
     # invoking the complete-sentence scorer again.

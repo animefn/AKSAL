@@ -5,6 +5,7 @@ not doing tedious things by hand:
 
     --lyrics lyrics.txt                        a file you already have
     --lyrics https://www.uta-net.com/song/N/   a Uta-Net song page
+    --lyrics https://lrclib.net/tracks/N        an LRCLIB track page
     --lyrics "朔日"                             an LRCLIB search
 
 Whatever the source, the resolved text is cached to the project directory as a
@@ -34,6 +35,8 @@ TIMEOUT = 25
 LRC_LINE = re.compile(r"^((?:\[\d+:\d+(?:[.:]\d+)?\])+)(.*)$")
 LRC_STAMP = re.compile(r"\[(\d+):(\d+)(?:[.:](\d+))?\]")
 UTANET_SONG = re.compile(r"uta-net\.com/song/(\d+)", re.I)
+LRCLIB_TRACK_PATH = re.compile(r"^/tracks/([1-9]\d*)/?$")
+LRCLIB_HOSTS = {"lrclib.net", "www.lrclib.net"}
 
 
 @dataclass
@@ -415,19 +418,60 @@ def fetch_lrclib(query: str) -> LyricsResult:
             "-- LRCLIB often stores a romanised artist name, so including the "
             "Japanese artist can match nothing.")
 
-    body = best.get("syncedLyrics") or best.get("plainLyrics") or ""
+    return _lrclib_result(best)
+
+
+def _lrclib_result(track: dict) -> LyricsResult:
+    """Turn one validated LRCLIB API track into AKSAL's common result."""
+    if track.get("instrumental"):
+        raise ValueError("the selected LRCLIB track is instrumental")
+    body = track.get("syncedLyrics") or track.get("plainLyrics") or ""
+    if not isinstance(body, str) or not body.strip():
+        raise ValueError("the selected LRCLIB track has no usable lyrics")
     lines, timings = parse_lrc(body)
     return LyricsResult(lines=clean_lines("\n".join(lines)), source="lrclib",
-                        title=str(best.get("trackName") or ""),
-                        artist=str(best.get("artistName") or ""),
+                        title=str(track.get("trackName") or ""),
+                        artist=str(track.get("artistName") or ""),
                         timings=timings)
+
+
+def lrclib_track_id(url: str) -> str | None:
+    """Return a direct LRCLIB page's numeric track id, or None for another host.
+
+    A URL on LRCLIB itself is considered intentional input, so a malformed
+    track path raises a specific error instead of falling through to the generic
+    unsupported-URL message.
+    """
+    parsed = urllib.parse.urlsplit(url)
+    if (parsed.hostname or "").lower() not in LRCLIB_HOSTS:
+        return None
+    match = LRCLIB_TRACK_PATH.fullmatch(parsed.path)
+    if not match:
+        raise ValueError(
+            f"invalid LRCLIB track URL: {url}. Expected "
+            "https://lrclib.net/tracks/<numeric-id>.")
+    return match.group(1)
+
+
+def fetch_lrclib_track(track_id: str) -> LyricsResult:
+    """Fetch one exact track through LRCLIB's official id endpoint."""
+    if not re.fullmatch(r"[1-9]\d*", str(track_id)):
+        raise ValueError(f"invalid LRCLIB track id: {track_id!r}")
+    try:
+        track = json.loads(_get(f"https://lrclib.net/api/get/{track_id}"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(
+            "unexpected non-JSON response from LRCLIB track endpoint") from exc
+    if not isinstance(track, dict):
+        raise ValueError("unexpected response from LRCLIB track endpoint")
+    return _lrclib_result(track)
 
 
 # --- dispatch -----------------------------------------------------------------
 
 def resolve(spec: str, cache: Path | None = None, refresh: bool = False,
             log=print) -> LyricsResult:
-    """Turn a --lyrics value into lyrics: file path, URL, or LRCLIB search."""
+    """Resolve a file, Uta-Net/LRCLIB track URL, or LRCLIB search."""
     if cache is not None and cache.exists() and not refresh:
         log(f"  using cached lyrics: {cache}")
         lines, timings = parse_lrc(cache.read_text(encoding="utf-8"))
@@ -443,10 +487,13 @@ def resolve(spec: str, cache: Path | None = None, refresh: bool = False,
         if UTANET_SONG.search(spec):
             log(f"  fetching from Uta-Net: {spec}")
             result = fetch_utanet(spec)
+        elif (track_id := lrclib_track_id(spec)) is not None:
+            log(f"  fetching LRCLIB track {track_id}")
+            result = fetch_lrclib_track(track_id)
         else:
             raise ValueError(
                 f"no parser for {spec}. Supported: a local file, a Uta-Net song "
-                "URL, or a search term for LRCLIB.")
+                "URL, an LRCLIB track URL, or a search term for LRCLIB.")
     else:
         log(f"  searching LRCLIB for {spec!r}")
         result = fetch_lrclib(spec)
