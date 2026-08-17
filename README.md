@@ -76,6 +76,12 @@ phase2   the tool takes corrected lines (phase 1 after your correction)        -
 
 Phase 2 re-aligns **inside each line window you approved** via your manual correction. The tool is for the lazy, but don't be too lazy: check the output of phase 1 (and fix it if needed) before feeding it to phase 2!
 
+The romaji inserted into the Phase 1 lines is **a provisional timing aid, not
+the final reading**. It lets someone who does not read Japanese see roughly what
+is being sung while moving the line boundaries in Aegisub. Phase 2 evaluates
+ambiguous readings again against those corrected boundaries, then writes the
+result to the final romaji karaoke track.
+
 Both karaoke tracks are built from **one** syllable segmentation, so their `\k`
 splits match by construction rather than by coincidence. Phase 2 asserts this and warns if they ever diverge.
 
@@ -315,7 +321,7 @@ Three commands: `find` (optional, discovery), then `phase1` → you edit →
 | `--reference PATH\|URL` | — | The official track: a local file, or a URL for yt-dlp (cached beside the output). Lets you use the **full** lyric sheet: cut lines drop out automatically. |
 | `--song-start TIME` | — | Roughly where the song starts, e.g. `0:36` or `21:30`. A hint with `--reference`; required and exact-ish without one. |
 | `--duration TIME` | `92` (announced when assumed) | How long the song runs in the video, e.g. `90` or `1:30`. Without `--reference` it also bounds the lyrics. |
-| `--insert-romaji` / `--no-insert-romaji` | **on** | Prefix each line with its romaji as `{*RO*…*RO*}`. Invisible when rendered, visible in Aegisub's edit box — you are about to correct these lines, so you need to tell them apart. |
+| `--insert-romaji` / `--no-insert-romaji` | **on** | Prefix each line with provisional romaji as `{*RO*…*RO*}`. Invisible when rendered and visible in Aegisub's edit box, it helps non-Japanese readers identify and time lines. Phase 2 re-evaluates it after timing corrections. |
 | `--refresh-lyrics` | off | Re-fetch even if a cached copy exists. |
 | `--lyrics-format` | `auto` | `auto`, `jp` or `romaji`. |
 | `--analyser` | `ichiran` | `ichiran` or `unidic` — which engine decides word boundaries and readings. See below. |
@@ -478,6 +484,15 @@ subtitle timing. Phase 2 uses the corrected line windows, saves its decisions
 in `selections.json`, and reuses them until the text, timing, audio, model,
 candidates, analyser, or scorer changes. A manual edit in `readings.tsv` always wins. See
 [docs/reading-arbitration.md](docs/reading-arbitration.md).
+
+For example, `未だ探し歩いている` can begin with either `まだ` (*mada*) or
+`いまだ` (*imada*). If Phase 1 places the start too late and cuts off the initial
+`い`, its provisional romaji may say *mada*. Move the line start earlier in
+Aegisub so the window includes the `い`; because the timing changed, Phase 2
+re-scores the corrected clip and can change the final reading to `いまだ`
+[*imada*]. The Phase 1 annotation helped you identify and time the line, but it
+did not lock the final romaji. If the acoustic choice is still wrong, set the
+reading explicitly in `readings.tsv`; that manual choice takes precedence.
 
 ---
 
