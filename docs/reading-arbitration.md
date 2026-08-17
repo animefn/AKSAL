@@ -22,6 +22,12 @@ confidence thresholds did not transfer from synthetic decoys to real words.
 Manual readings already present in the TSV are never sent to audio selection.
 They are user decisions and have highest priority.
 
+Reading selection hears 0.75 seconds of additional audio before and after the
+line, clamped to the available source. This prevents a provisional reading
+from cutting off a mora that exists only in an alternative, such as the initial
+い in いまだ. The context changes only the acoustic scoring crop: it never
+moves phase-1 lines or timing corrected by the user in Aegisub.
+
 ## Models
 
 The public model values are real Hugging Face IDs:

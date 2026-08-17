@@ -455,9 +455,10 @@ The comments render nothing (libass ignores them) but travel with the file, so
 the alternatives are in front of you in Aegisub rather than in a log.
 
 For Japanese lines, the selection model scores every complete-sentence reading
-hypothesis inside the line's audio window. It changes a word only when the
-result is likely; uncertain alternatives stay visible for review. Phase 2 uses
-the corrected line windows, saves its decisions in `selections.json`, and
+hypothesis with 0.75 seconds of audio context on each side of the line. It
+changes a word only when the result is likely; uncertain alternatives stay
+visible for review. The added context never changes the subtitle timing. Phase
+2 uses the corrected line windows, saves its decisions in `selections.json`, and
 reuses them until the text, timing, audio, model, candidates, analyser, or
 scorer changes. A manual edit in `readings.tsv` always wins. See
 [docs/reading-arbitration.md](docs/reading-arbitration.md).

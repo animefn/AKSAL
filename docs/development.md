@@ -14,5 +14,5 @@ complexity would buy little practical improvement.
 The reading selector intentionally uses the complete-sentence CTC likelihood
 mechanism proven in `reading_candidates.py`. Do not recalibrate or replace it
 without corpus evidence. Integration work belongs around it: candidate
-nomination, exact audio windows, persistence/invalidation, and explicit model
-roles.
+nomination, line-derived audio windows with bounded context,
+persistence/invalidation, and explicit model roles.

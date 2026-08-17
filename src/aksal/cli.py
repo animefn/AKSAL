@@ -22,6 +22,7 @@ from . import project as project_mod
 from .project import Project
 
 MAX_HOLD = 2.0          # longest a single unit may be held before it is a rest
+READING_CONTEXT = 0.75  # audio on each side of a line, for reading selection
 
 # Slack around a --song-start hint when searching for the song. A hint only
 # bounds the search -- the fingerprint match decides the actual timing -- so
@@ -60,6 +61,23 @@ def display_reading(reading: str) -> str:
             cells.append(" ")
         cells.extend(romaji.line(moras.split(word)))
     return f"{reading} [{''.join(cells)}]"
+
+
+def reading_score_interval(start: float, end: float,
+                           audio_duration: float,
+                           context: float = READING_CONTEXT
+                           ) -> tuple[float, float]:
+    """Pad a reading-selection interval without changing subtitle timing.
+
+    Phase 1's provisional reading can place the rough start after a mora that
+    exists only in a rival reading (まだ versus いまだ).  The CTC scorer needs
+    to hear that mora to choose correctly.  Symmetric context is safe because
+    CTC can spend silence on blanks; clamping keeps the crop inside the audio.
+    """
+    limit = max(audio_duration, 0.0)
+    padded_start = min(max(start - context, 0.0), limit)
+    padded_end = min(max(end + context, padded_start), limit)
+    return padded_start, padded_end
 
 
 def check_fits_window(n_units: int, window: float, log=print) -> None:
@@ -423,10 +441,13 @@ def cmd_phase1(args) -> None:
             if end <= start:
                 selection_errors[line_no] = "rough line interval is empty"
                 continue
+            start, end = reading_score_interval(
+                start, end, len(y) / audio_mod.SR)
             plans.append((line_no, words, choices, start, end))
 
     if plans:
-        log(f"\nreading selection ({len(plans)} ambiguous line(s))")
+        log(f"\nreading selection ({len(plans)} ambiguous line(s), "
+            f"{READING_CONTEXT:.2f}s context on each side)")
         fresh_plans = []
         decision_model = model_spec.decision_identity(selection_model)
         for line_no, words, choices, start, end in plans:
@@ -795,7 +816,7 @@ def standalone_project(lines_file: Path, events: list[ass.Event], args) -> Proje
 def cmd_phase2(args) -> None:
     from . import align as A
     from . import reading_selector, timing
-    from .audio import envelope, prepare
+    from .audio import SR, envelope, prepare
 
     lines_file: Path = args.lines
     if not lines_file.exists():
@@ -899,8 +920,9 @@ def cmd_phase2(args) -> None:
         return start, end
 
     # Reading selection is a line-level operation and therefore runs before
-    # mora timing. It uses the exact corrected ASS windows, persists decisions,
-    # and reuses them only while text, audio, model and candidates all match.
+    # mora timing. It adds bounded context around the corrected ASS windows,
+    # persists decisions, and reuses them only while text, audio, model and
+    # candidates all match. The timing pass below still uses the exact window.
     selected_by_event: dict[int, reading_selector.LineSelection] = {}
     selection_errors: dict[int, str] = {}
     selection_plans = []
@@ -916,13 +938,16 @@ def cmd_phase2(args) -> None:
                 words, readings.candidate_readings)
             if any(len(choice) > 1 for choice in choices):
                 start, end = line_audio_interval(event)
+                start, end = reading_score_interval(
+                    start, end, len(y) / SR)
                 selection_plans.append(
                     (event_index, surface, words, choices, start, end))
 
     aligner = None
     lp = None
     if selection_plans:
-        log(f"\nreading selection ({len(selection_plans)} ambiguous line(s))")
+        log(f"\nreading selection ({len(selection_plans)} ambiguous line(s), "
+            f"{READING_CONTEXT:.2f}s context on each side)")
         fresh_plans = []
         decision_model = model_spec.decision_identity(proj.selection_model)
         for event_index, surface, words, choices, start, end in selection_plans:

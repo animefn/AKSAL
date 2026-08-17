@@ -87,10 +87,23 @@ def test_phase2_selects_and_reuses_complete_line_reading(tmp_path, monkeypatch):
         lambda surface, current: ["いまだ"]
         if (surface, current) == ("未だ", "まだ") else [],
     )
+    score_windows = []
+    real_select = reading_selector.select
+
+    def capture_score_window(words, selector, log_probs, candidates_of,
+                             choices=None):
+        score_windows.append(log_probs.shape[0])
+        return real_select(words, selector, log_probs, candidates_of,
+                           choices=choices)
+
+    monkeypatch.setattr(reading_selector, "select", capture_score_window)
 
     FakeAligner.loaded_models.clear()
     cmd_phase2(arguments(project.lines_file))
     assert FakeAligner.loaded_models == ["selection-model", "timing-model"]
+    # The corrected 1.0-2.0 subtitle window is scored with 0.75 seconds of
+    # context on both sides: frames 12 through 137 at 20 ms per frame.
+    assert score_windows == [126]
     assert "いまだ" in project.readings.read_text(encoding="utf-8")
     assert project.selections.exists()
     assert project.kara_jp_file.exists()

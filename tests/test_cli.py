@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import pytest
 
-from aksal.cli import build_parser, display_command, display_reading
+from aksal.cli import (build_parser, display_command, display_reading,
+                       reading_score_interval)
 
 
 def flags(command: str) -> dict:
@@ -32,6 +33,12 @@ def test_displayed_phase2_command_quotes_paths_with_spaces():
 def test_display_reading_adds_aksal_romaji():
     assert display_reading("いまだ") == "いまだ [imada]"
     assert display_reading("えい えん") == "えい えん [ei en]"
+
+
+def test_reading_score_interval_adds_context_and_clamps_to_audio():
+    assert reading_score_interval(2.0, 4.0, 10.0) == (1.25, 4.75)
+    assert reading_score_interval(0.2, 9.8, 10.0) == (0.0, 10.0)
+    assert reading_score_interval(12.0, 13.0, 10.0) == (10.0, 10.0)
 
 
 def test_the_three_commands_exist():
