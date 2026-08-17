@@ -10,6 +10,7 @@ not bundled and are cached in the platform's writable user cache on first use.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -34,8 +35,20 @@ EXCLUDE = [
 
 HIDDEN = [
     "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
-    "aksal.discover", "aksal.tools", "demucs.api",
+    "aksal.discover", "aksal.tools", "aksal.updater", "demucs.api",
 ]
+
+
+def build_version() -> str:
+    """Version compiled into a frozen build; release tags are authoritative."""
+    supplied = os.environ.get("AKSAL_BUILD_VERSION", "").removeprefix("v")
+    if re.fullmatch(r"\d+(?:\.\d+){1,3}", supplied):
+        return supplied
+    project = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([0-9.]+)"', project, re.MULTILINE)
+    if not match:
+        raise RuntimeError("cannot determine AKSAL version")
+    return match.group(1)
 
 
 def executable_path(onefile: bool) -> Path:
@@ -75,8 +88,20 @@ def main() -> int:
     for module in HIDDEN:
         cmd += ["--hidden-import", module]
 
+    # This module exists only while PyInstaller analyses the package.  The
+    # frozen bytecode keeps the value, while source installs continue to use
+    # importlib.metadata and the checkout never becomes dirty after a build.
+    version = build_version()
+    stamp = ROOT / "src" / "aksal" / "_frozen_version.py"
+    # A killed build may have left its generated stamp behind.
+    stamp.unlink(missing_ok=True)
+    stamp.write_text(f'VERSION = "{version}"\n', encoding="utf-8")
+    print(f"building AKSAL {version}")
     print(subprocess.list2cmdline(cmd), flush=True)
-    result = subprocess.run(cmd, cwd=ROOT)
+    try:
+        result = subprocess.run(cmd, cwd=ROOT)
+    finally:
+        stamp.unlink(missing_ok=True)
     if result.returncode != 0:
         return result.returncode
 
@@ -92,6 +117,15 @@ def main() -> int:
         print((probe.stderr or probe.stdout or "")[-1500:])
         return 1
     print("  smoke test: --help ok")
+
+    version_probe = subprocess.run(
+        [str(executable), "--version"], capture_output=True, text=True)
+    if (version_probe.returncode != 0 or
+            version not in (version_probe.stdout or "")):
+        print("\nBUILD VERSION STAMP FAILED:")
+        print((version_probe.stderr or version_probe.stdout or "")[-1500:])
+        return 1
+    print(f"  smoke test: version {version} ok")
 
     smoke_env = dict(os.environ, AKSAL_PACKAGING_SMOKE="1")
     imports = subprocess.run(

@@ -11,6 +11,10 @@ episode + full lyrics + the official single      phase1 (mode A)
 episode + lyrics of your cut + a start time      phase1 (mode B)
 ```
 
+The downloaded application can check or install a newer GitHub release with
+`aksal update --check` or `aksal update`. Normal commands check at most once a
+day and print a notice only when a newer version exists.
+
 ---
 
 ## 1. You already have timed lines — `phase2` alone

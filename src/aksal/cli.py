@@ -17,6 +17,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from . import __version__
 from . import ass, lyrics as lyrics_mod, model_spec, moras, readings, romaji
 from . import project as project_mod
 from .project import Project
@@ -1158,11 +1159,35 @@ def cmd_phase2(args) -> None:
 
 # =============================================================================
 
+def cmd_update(args) -> None:
+    """Install a verified release after this process relinquishes its files."""
+    from . import updater
+
+    try:
+        updater.install_latest(
+            check_only=args.check, force=args.force, log=log)
+    except RuntimeError as exc:
+        raise SystemExit(f"update failed: {exc}") from exc
+    except Exception as exc:  # noqa: BLE001 - filesystem/launcher UX boundary
+        raise SystemExit(
+            f"update failed: {type(exc).__name__}: {exc}") from exc
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="aksal", description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--version", action="version",
+                   version=f"%(prog)s {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    pu = sub.add_parser(
+        "update", help="check for and install the latest GitHub release")
+    pu.add_argument("--check", action="store_true",
+                    help="report the latest version without installing it")
+    pu.add_argument("--force", action="store_true",
+                    help="reinstall even when the latest version is current")
+    pu.set_defaults(func=cmd_update)
 
     p1 = sub.add_parser("phase1", help="produce timed lines for you to correct")
     p1.add_argument("--video", required=True, type=Path)
@@ -1428,12 +1453,17 @@ def main(argv: list[str] | None = None) -> int:
 
     # Lookup-only `find` does not touch media. All other paths do, and check
     # once up front so a missing ffmpeg is reported before model loading.
-    if args.cmd != "find" or args.video is not None:
+    if (args.cmd not in {"find", "update"} or
+            (args.cmd == "find" and args.video is not None)):
         from . import tools
 
         tools.ensure(log=log)
 
     args.func(args)
+    if args.cmd != "update":
+        from . import updater
+
+        updater.notify_if_available(log=log)
     return 0
 
 

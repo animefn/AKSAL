@@ -507,6 +507,27 @@ the waveform, starting with whatever phase 1 flagged.
 
 ## Releases
 
+Packaged builds check GitHub at most once per day after a successful command.
+If a newer release exists, AKSAL prints a short notice; the check never makes
+alignment fail when GitHub is unavailable. Set `AKSAL_NO_UPDATE_CHECK=1` to
+disable these notices.
+
+To check explicitly or install the latest build:
+
+```bash
+aksal update --check
+aksal update
+```
+
+Self-update is available in a downloaded `onedir` build when that GitHub
+release includes an archive for the same OS and CPU; it is not available to a
+source or pip installation. AKSAL downloads the matching release archive,
+verifies its published SHA-256, and stages it before exiting. A small system
+helper then replaces `aksal.exe`/`aksal` and `_internal`; it preserves unrelated
+files beside AKSAL, starts the new executable as a smoke test, and restores the
+old bundle if installation fails. The result is recorded in AKSAL's user-data
+directory as `update.log`.
+
 Windows release builds are produced by GitHub Actions from a tag:
 
 ```bash
@@ -514,8 +535,9 @@ git tag v0.1.0 && git push origin v0.1.0
 ```
 
 That is the whole ritual — the tag names the release, the archive and the
-version. Tests run first, and the build refuses to publish anything whose
-executable does not start.
+version embedded in the executable. Tests run first, and the build refuses to
+publish anything whose executable does not start. The release also includes a
+`.sha256` sidecar consumed by the updater.
 
 `.github/workflows/tests.yml` runs the suite on every push. The manual
 `build-linux` workflow creates and smoke-tests a Linux x64 `.tar.gz` artifact

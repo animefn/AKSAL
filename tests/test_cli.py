@@ -41,9 +41,13 @@ def test_reading_score_interval_adds_context_and_clamps_to_audio():
     assert reading_score_interval(12.0, 13.0, 10.0) == (10.0, 10.0)
 
 
-def test_the_three_commands_exist():
+def test_the_four_commands_exist():
     choices = build_parser()._subparsers._group_actions[0].choices
-    assert set(choices) == {"phase1", "phase2", "find"}
+    assert set(choices) == {"phase1", "phase2", "find", "update"}
+
+
+def test_update_has_check_and_force_flags():
+    assert set(flags("update")) >= {"--check", "--force"}
 
 
 @pytest.mark.parametrize("flag", [

@@ -54,3 +54,4 @@ out/
 dist/
 build/
 *.spec
+src/aksal/_frozen_version.py
