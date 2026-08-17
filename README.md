@@ -37,7 +37,7 @@ Want to run it from source or try the Linux build? See
 - Can help find lyrics and a reference track from the anime title.
 - Runs from the command line; there is no GUI yet.
 
-## Where AKSAL fits in karaoke-making
+## Where AKSAL fits in the karaoke-making process
 
 - **Step 0 (preparation): Find the karaoke or lyrics.** Check
   [kara.moe](https://kara.moe/) first. If somebody already made a good k-split
@@ -88,10 +88,11 @@ option, see **[USAGE.md](USAGE.md)**.
 
 ## A note about Japanese readings
 
-Japanese spelling does not always reveal what the singer says—`永遠`, for
-example, may be `えいえん` (*eien*) or `とわ` (*towa*)—so remember that Phase 1
-romaji is only a preview, review the result after Phase 2 listens to your
-corrected line, and see [how ambiguous readings work](README_EXTENDED.md#ambiguous-japanese-readings)
+Songs can give familiar Japanese spellings a non-standard or poetic reading,
+often called *gikun* in this context—`永遠`, for example, may be sung as
+`えいえん` (*eien*) or `とわ` (*towa*)—so remember that Phase 1 romaji is only a
+preview, review the result after Phase 2 listens to your corrected line, and see
+[how ambiguous readings work](README_EXTENDED.md#ambiguous-japanese-readings)
 when a manual `readings.tsv` choice is needed.
 
 ## Updating AKSAL
@@ -121,15 +122,15 @@ finished karaoke, so unusual readings, sustained notes, heavy song edits, and
 imperfect lyrics can still need manual correction; see the
 **[full limitations and accuracy notes](README_EXTENDED.md#limitations)**.
 
+## Why “AKSAL”?
+
+**A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics—and a pun on the
+Arabic word أكسل (*aksal*), “lazier.” A fitting name for a lazier way to make
+karaoke for your favourite anime songs.
+
 ## More information
 
 - **[Complete usage guide](USAGE.md)** — workflows and examples
 - **[Extended README](README_EXTENDED.md)** — advanced usage, internals,
   Japanese analysis, limitations, changelog, and roadmap
 - **[Third-party notices](THIRD-PARTY.md)** — dependencies, authors, and licences
-
-## Why “AKSAL”?
-
-**A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics—and a pun on the
-Arabic word أكسل (*aksal*), “lazier.” A fitting name for a lazier way to make
-karaoke for your favourite anime songs.

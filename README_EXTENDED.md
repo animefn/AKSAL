@@ -36,7 +36,9 @@ and notarization.
 Packaged builds offer to download a compatible FFmpeg build when it is missing.
 On macOS, install FFmpeg with `brew install ffmpeg`. The acoustic and Demucs
 models are not bundled; they download into AKSAL's writable per-user cache on
-first use and may require several gigabytes in total.
+first use. The default acoustic model is roughly 630 MB and the Demucs model is
+roughly 80 MB; the packaged application, framework caches, and any additional
+models can bring total disk use to several gigabytes.
 
 ### Running from source
 
@@ -48,6 +50,8 @@ git clone https://github.com/animefn/AKSAL.git
 cd AKSAL
 pip install -e .
 ```
+
+The source installation has been verified on Python 3.13, including Demucs.
 
 For optional vocal separation:
 
@@ -71,7 +75,8 @@ alignment accuracy can change across library versions. Release builders use
 
 `-o/--output-dir` names one self-contained project directory. If omitted, the
 default is `<video>.aksal` beside the video. It is a directory, not an ASS
-filename.
+filename, and project-specific files are never written into AKSAL's own program
+folder.
 
 ```text
 OP01.aksal/
@@ -88,7 +93,7 @@ OP01.aksal/
 
 Phase 2 normally needs only `OP01.lines.ass`; it finds `project.json` beside
 the subtitle. Project caches can be large, but they are safe to delete after
-you have finished that song.
+you have finished that song because they have no value outside its project.
 
 All generated ASS files live together in the project root. AKSAL does not use
 the ASS `Effect` field for hidden line identifiers, so ordinary Aegisub scripts
