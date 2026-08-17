@@ -4,15 +4,17 @@
 
 *A lazier way to create karaoke for anime songs.*
 
-AKSAL helps you turn Japanese or romaji lyrics into line-timed and syllable-timed
-karaoke. It does the repetitive work, but it does not pretend the result needs
-no human review: you still get the final say in
+This is a tool that helps you create karaoke for Japanese songs in a much lazier
+way. Please note: *lazier*, not automated—it still needs a human to check the
+results and make adjustments in
 [Aegisub](https://github.com/TypesettingTools/Aegisub).
 
-It succeeds our older [K-Splitter](https://github.com/animefn/ksplitter), also
-known unofficially as *AFKS*. K-Splitter suggested where to split a line; AKSAL
-can find the lines in the audio, split them, time the sung units, and produce
-matching Japanese and romaji karaoke tracks.
+AKSAL succeeds our previous [K-Splitter](https://github.com/animefn/ksplitter),
+also known unofficially as *AFKS* (AnimeFN K-Splitter). The older tool helped
+you split karaoke correctly, although it could still make mistakes. This time,
+AKSAL can take Japanese or romaji lyrics, split them **and** time them to your
+audio. K-Splitter only gave hints about where to split; AKSAL can also time the
+sung units and convert Japanese lyrics into romaji while making the karaoke.
 
 ## Download
 
@@ -37,24 +39,24 @@ Want to run it from source or try the Linux build? See
 
 ## Where AKSAL fits in karaoke-making
 
-1. **Find the karaoke or lyrics.** Check [kara.moe](https://kara.moe/) first. If
-   somebody already made a good k-split karaoke, download it and skip to adding
-   effects. Otherwise, find Japanese or romaji lyrics—or transcribe them from
-   the credits.
-2. **Time the lines.** Decide where each lyric line begins and ends. This is
-   AKSAL **Phase 1**.
-3. **Split and time the sung units.** Turn every line into timed karaoke cells.
-   This is AKSAL **Phase 2**.
-4. **Add effects, if you want them.** Create your own or use tools and examples
-   such as [KaraEffector](https://github.com/KaraEffect0r/Kara_Effector),
-   [PyonFX](https://github.com/CoffeeStraw/PyonFX),
-   [karaOK](https://github.com/slackingway/karaOK),
-   [Seekladoom ASS Effect](https://github.com/Seekladoom/Seekladoom-ASS-Effect),
-   or this [Aegisub/PyonFX effects collection](https://github.com/kakashi1987/aegisub-lua-pyonfx-karaoke-fx-collection).
-   [NyuFX](https://github.com/Youka/NyuFX) is an older, unmaintained option.
+- **Step 0 (preparation): Find the karaoke or lyrics.** Check
+  [kara.moe](https://kara.moe/) first. If somebody already made a good k-split
+  karaoke, download it and skip to adding effects. Otherwise, find Japanese or
+  romaji lyrics—or transcribe them from the credits.
+- **Step 1: Time the lines.** Decide where each lyric line begins and ends.
+  This is AKSAL **Phase 1**.
+- **Step 2: Split and time the sung units.** Turn every line into timed karaoke
+  cells. This is AKSAL **Phase 2**.
+- **Step 3 (optional): Add effects.** Create your own or use tools and examples
+  such as [KaraEffector](https://github.com/KaraEffect0r/Kara_Effector),
+  [PyonFX](https://github.com/CoffeeStraw/PyonFX),
+  [karaOK](https://github.com/slackingway/karaOK),
+  [Seekladoom ASS Effect](https://github.com/Seekladoom/Seekladoom-ASS-Effect),
+  or this [Aegisub/PyonFX effects collection](https://github.com/kakashi1987/aegisub-lua-pyonfx-karaoke-fx-collection).
+  [NyuFX](https://github.com/Youka/NyuFX) is an older, unmaintained option.
 
-AKSAL currently helps with finding material and performs steps 2 and 3. Effects
-are not generated yet—but a possible Phase 3 is in the community vote below.
+AKSAL currently helps with Step 0 and performs Steps 1 and 2. Step 3 effects are
+not generated yet—but a possible Phase 3 is in the community vote below.
 
 ## The simple workflow
 
