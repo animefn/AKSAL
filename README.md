@@ -20,6 +20,20 @@ aksal phase2 OP01.aksal/OP01.lines.ass
 
 **→ [USAGE.md](USAGE.md) — every workflow, with examples.**
 
+## Vote on AKSAL's next features
+
+The roadmap is being prioritized through a
+**[community feature vote](https://github.com/animefn/AKSAL/discussions/1)**.
+React with 👍 or 👎 on each option independently; you may vote on all three.
+
+- [Web GUI with broader karaoke-lyrics search](https://github.com/animefn/AKSAL/discussions/1#discussioncomment-18055216)
+- [Phase 3 with pre-made karaoke effects](https://github.com/animefn/AKSAL/discussions/1#discussioncomment-18055217)
+- [Community web catalog with CLI and web submissions](https://github.com/animefn/AKSAL/discussions/1#discussioncomment-18055218)
+
+Reply beneath an option if you have a particular workflow or smaller first
+version in mind—the vote measures demand, while the replies explain what would
+actually be useful.
+
 ---
 
 ## Motivation
