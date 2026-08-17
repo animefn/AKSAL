@@ -301,6 +301,22 @@ particle attaches to the preceding word is often a karaoke-author convention,
 not a pronunciation error. This affects word grouping; it does not remove or
 retime sounds in syllable grouping.
 
+### Custom phrase boundaries
+
+AKSAL rejoins a small built-in list of familiar expressions such as `共に` and
+`どうにか` when the analyser splits them into shorter grammatical units. This
+changes word grouping and romaji spaces, but not the mora or their timing.
+
+The list is editable. Put `aksal.phrases.tsv` in AKSAL's per-user data
+directory, with the phrase in the first tab-separated column. Add a reading in
+the second column only when joining the analysed parts would produce the wrong
+one. Use `DELETE` in that column to remove a built-in entry:
+
+```text
+本当に
+誰か	DELETE
+```
+
 ## Ambiguous Japanese readings
 
 A spelling can have several real readings, and songs frequently choose a

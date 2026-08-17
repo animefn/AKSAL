@@ -83,21 +83,17 @@ Phase 2   corrected lyric lines  →  Japanese + romaji k-split karaoke
           and optionally create karaoke effects
 ```
 
-### Example 1 — Full lyrics and the official song
+### Example 1 — Your lyric lines are already timed
 
-You have an episode containing the OP or ED, the full lyrics, and the official
-full-length song:
+If you already made the line timing in Aegisub, or found a subtitle with one
+lyric line per event, skip Phase 1:
 
 ```bash
-aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference "full song.flac" -o OP01.aksal
-
-# Open OP01.aksal/OP01.lines.ass in Aegisub and fix the line timings, then:
-aksal phase2 OP01.aksal/OP01.lines.ass
+aksal phase2 mylines.ass --video EP01.mkv
 ```
 
-`--lyrics` can also be a Uta-Net URL, an LRCLIB track URL, or an LRCLIB search
-term. The reference can be a local audio/video file or a URL supported by
-yt-dlp.
+This is usually the easiest and most accurate route because you have already
+given AKSAL the line boundaries it otherwise has to estimate.
 
 ### Example 2 — Lyrics already trimmed to the TV-size version
 
@@ -113,17 +109,21 @@ aksal phase2 OP01.aksal/OP01.lines.ass
 
 For an ending, use its later start time—for example `--song-start 21:30`.
 
-### Example 3 — Your lyric lines are already timed
+### Example 3 — Full lyrics and the official song
 
-If you already made the line timing in Aegisub, or found a subtitle with one
-lyric line per event, skip Phase 1:
+You have an episode containing the OP or ED, the full lyrics, and the official
+full-length song:
 
 ```bash
-aksal phase2 mylines.ass --video EP01.mkv
+aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference "full song.flac" -o OP01.aksal
+
+# Open OP01.aksal/OP01.lines.ass in Aegisub and fix the line timings, then:
+aksal phase2 OP01.aksal/OP01.lines.ass
 ```
 
-This is usually the most accurate route because you have already given AKSAL
-the line boundaries it otherwise has to estimate.
+`--lyrics` can also be a Uta-Net URL, an LRCLIB track URL, or an LRCLIB search
+term. The reference can be a local audio/video file or a URL supported by
+yt-dlp.
 
 ### Example 4 — You only know the anime title
 
