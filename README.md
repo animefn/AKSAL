@@ -58,15 +58,35 @@ Want to run it from source or try the Linux build? See
 AKSAL currently helps with Step 0 and performs Steps 1 and 2. Step 3 effects are
 not generated yet—but a possible Phase 3 is in the community vote below.
 
-## The simple workflow
+## How to use AKSAL
+
+### Video tutorials
+
+*Coming soon.*
+
+### Explanation
+
+**The simple workflow:**
+
+AKSAL generates karaoke in two phases, as explained in
+[Where AKSAL fits in the karaoke-making process](#where-aksal-fits-in-the-karaoke-making-process)
+above:
 
 ```text
 Phase 1   video + lyrics + song  →  timed lyric lines
-          ↓ you check and correct the lines in Aegisub
+          ↓
+          You manually check and correct the line timing in Aegisub
+          ↓
 Phase 2   corrected lyric lines  →  Japanese + romaji k-split karaoke
+          ↓
+          Review the romaji, adjust the splitting to your style,
+          and optionally create karaoke effects
 ```
 
-For the usual case—an episode, full lyrics, and the official song:
+### Example 1 — Full lyrics and the official song
+
+You have an episode containing the OP or ED, the full lyrics, and the official
+full-length song:
 
 ```bash
 aksal phase1 --video EP01.mkv --lyrics lyrics.txt --reference "full song.flac" -o OP01.aksal
@@ -78,6 +98,43 @@ aksal phase2 OP01.aksal/OP01.lines.ass
 `--lyrics` can also be a Uta-Net URL, an LRCLIB track URL, or an LRCLIB search
 term. The reference can be a local audio/video file or a URL supported by
 yt-dlp.
+
+### Example 2 — Lyrics already trimmed to the TV-size version
+
+You have only the lyrics actually sung in the short version, so you do not need
+the official full-length song:
+
+```bash
+aksal phase1 --video EP01.mkv --lyrics tv-size.txt --song-start 0:36 --duration 90 -o OP01.aksal
+
+# Correct OP01.aksal/OP01.lines.ass in Aegisub, then:
+aksal phase2 OP01.aksal/OP01.lines.ass
+```
+
+For an ending, use its later start time—for example `--song-start 21:30`.
+
+### Example 3 — Your lyric lines are already timed
+
+If you already made the line timing in Aegisub, or found a subtitle with one
+lyric line per event, skip Phase 1:
+
+```bash
+aksal phase2 mylines.ass --video EP01.mkv
+```
+
+This is usually the most accurate route because you have already given AKSAL
+the line boundaries it otherwise has to estimate.
+
+### Example 4 — You only know the anime title
+
+Let AKSAL look for the opening, lyrics, and a matching reference track, then
+offer to run Phase 1:
+
+```bash
+aksal find --anime "Cross Fight B-Daman eS" --video EP16.mkv --op
+```
+
+Use `--ed` instead of `--op` when looking for an ending.
 
 Why two phases? Your corrected line boundaries become hard limits for Phase 2,
 so AKSAL cannot quietly move a syllable into the wrong line. The tool is lazy;
@@ -127,6 +184,7 @@ imperfect lyrics can still need manual correction; see the
 **A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics—and a pun on the
 Arabic word أكسل (*aksal*), “lazier.” A fitting name for a lazier way to make
 karaoke for your favourite anime songs.
+
 
 ## More information
 
