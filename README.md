@@ -84,6 +84,7 @@ Once you understand the concept, these tutorials show the three main AKSAL
 workflows:
 
 1. [Example 1: create karaoke from timed romaji lyrics](https://youtu.be/EnUfPCtAYCs)
+[![Watch Example 1: timed romaji lyrics](https://img.youtube.com/vi/EnUfPCtAYCs/hqdefault.jpg)](https://youtu.be/EnUfPCtAYCs)
 2. [Example 2: create karaoke from exact, untimed Japanese lyrics](https://youtu.be/1n42nikhjBo)
 3. [Example 3: create karaoke from a full Japanese lyric sheet](https://youtu.be/BwdsPS7k6J4)
 
