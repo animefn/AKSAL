@@ -31,6 +31,13 @@ jobs:
       - name: Static check
         run: pyflakes src/aksal tests packaging
 
+      - name: Install Qt runtime libraries (for the aksal-gui smoke test)
+        # PyQt6 links libEGL.so.1 at import time regardless of platform
+        # plugin, so this is needed even for the offscreen smoke test below.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libegl1 libxkbcommon0
+
       - name: Build and smoke-test native executable
         run: python packaging/build.py
 
