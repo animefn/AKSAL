@@ -102,7 +102,7 @@ def checkpoint_path(spec: str | None, log=print) -> Path:
         pass
 
     log("  fetching the acoustic model (once; about 630 MB)")
-    log("  (this is the only download; it is cached in your AKSAL user cache)")
+    log("  (this is downloaded once into AKSAL's models folder)")
     try:
         return Path(hf_hub_download(REPO, CHECKPOINT))
     except Exception as exc:                         # noqa: BLE001

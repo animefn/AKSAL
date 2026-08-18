@@ -35,10 +35,12 @@ macOS application still needs a native build, code signing, and notarization.
 
 Packaged builds offer to download a compatible FFmpeg build when it is missing.
 On macOS, install FFmpeg with `brew install ffmpeg`. The acoustic and Demucs
-models are not bundled; they download into AKSAL's writable per-user cache on
-first use. The default acoustic model is roughly 630 MB and the Demucs model is
-roughly 80 MB; the packaged application, framework caches, and any additional
-models can bring total disk use to several gigabytes.
+models are not bundled; they download into the visible `models` directory
+beside the packaged executable on first use. The default acoustic model is
+roughly 630 MB and the Demucs model is roughly 80 MB; the packaged application
+and any additional models can bring total disk use to several gigabytes. If
+AKSAL is installed in a read-only directory, it prints a notice and falls back
+to the platform's per-user cache.
 
 ### Running from source
 
@@ -65,7 +67,10 @@ alignment accuracy can change across library versions. Release builders use
 
 ### Runtime storage
 
-- `AKSAL_CACHE_HOME` overrides the model and reproducible-download cache.
+- `AKSAL_MODEL_HOME` overrides the packaged build's model directory. The
+  standard `HF_HOME` and `TORCH_HOME` settings remain supported; an explicit
+  `HF_HOME` takes precedence over AKSAL's model-directory selection.
+- `AKSAL_CACHE_HOME` overrides temporary reproducible-download storage.
 - `AKSAL_HOME` overrides configuration, update metadata, and downloaded helper
   programs.
 - Project-specific audio and emissions stay inside the selected project

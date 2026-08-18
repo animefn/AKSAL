@@ -16,13 +16,12 @@ def main() -> int:
     # re-executes the bundle and the process forks endlessly.
     multiprocessing.freeze_support()
 
-    # /Applications, /usr/local and managed Windows installations may all be
-    # read-only. Honour an explicit HF_HOME; otherwise use the native writable
-    # user cache selected by AKSAL.
-    if getattr(sys, "frozen", False) and not os.environ.get("HF_HOME"):
-        from aksal.tools import cache_home
+    # Keep downloaded weights with a portable build. Managed/read-only
+    # installations fall back to the platform cache with a visible notice.
+    if getattr(sys, "frozen", False):
+        from aksal.tools import configure_model_home
 
-        os.environ["HF_HOME"] = str(cache_home() / "huggingface")
+        configure_model_home()
 
     if os.environ.get("AKSAL_PACKAGING_SMOKE") == "1":
         import demucs.api as demucs_api

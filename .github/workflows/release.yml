@@ -144,10 +144,10 @@ jobs:
           the executable on both systems. You may add the extracted directory
           to `PATH`.
 
-          The acoustic model (~630 MB) downloads into AKSAL's writable
-          per-user cache on first use. FFmpeg is required and yt-dlp is
-          optional; AKSAL offers to fetch either when it is missing. Demucs is
-          included, while its model also downloads on first use.
+          Acoustic and Demucs models download into the visible `models`
+          directory beside the executable on first use and survive updates.
+          FFmpeg is required and yt-dlp is optional; AKSAL offers to fetch
+          either when it is missing.
 
           See USAGE.md for the four workflows.
           EOF

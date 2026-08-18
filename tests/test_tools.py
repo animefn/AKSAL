@@ -7,6 +7,8 @@ verified by using it.
 """
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from aksal import tools
@@ -119,3 +121,53 @@ def test_user_data_and_cache_can_be_placed_explicitly(tmp_path, monkeypatch):
     monkeypatch.setenv("AKSAL_CACHE_HOME", str(cache))
     assert tools.home() == data
     assert tools.cache_home() == cache
+
+
+def test_frozen_build_keeps_models_beside_executable(tmp_path, monkeypatch):
+    executable = tmp_path / "portable" / "aksal.exe"
+    executable.parent.mkdir()
+    monkeypatch.setattr(tools.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(tools.sys, "executable", str(executable))
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.delenv("TORCH_HOME", raising=False)
+    monkeypatch.delenv("AKSAL_MODEL_HOME", raising=False)
+
+    selected = tools.configure_model_home()
+
+    assert selected == executable.parent / "models"
+    assert os.environ["HF_HOME"] == str(selected)
+    assert os.environ["TORCH_HOME"] == str(selected / "torch")
+    assert selected.is_dir()
+
+
+def test_frozen_model_home_falls_back_only_when_install_is_read_only(
+        tmp_path, monkeypatch):
+    executable = tmp_path / "readonly" / "aksal.exe"
+    fallback = tmp_path / "cache"
+    messages = []
+    monkeypatch.setattr(tools.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(tools.sys, "executable", str(executable))
+    monkeypatch.setattr(tools, "cache_home", lambda: fallback)
+    monkeypatch.setattr(tools, "_writable_directory", lambda path: False)
+    monkeypatch.delenv("HF_HOME", raising=False)
+    monkeypatch.delenv("TORCH_HOME", raising=False)
+    monkeypatch.delenv("AKSAL_MODEL_HOME", raising=False)
+
+    selected = tools.configure_model_home(log=messages.append)
+
+    assert selected == fallback / "models"
+    assert os.environ["HF_HOME"] == str(selected)
+    assert os.environ["TORCH_HOME"] == str(selected / "torch")
+    assert selected.is_dir()
+    assert "cannot write" in messages[0]
+
+
+def test_explicit_hf_home_is_never_replaced(tmp_path, monkeypatch):
+    explicit = tmp_path / "my-model-cache"
+    monkeypatch.setattr(tools.sys, "frozen", True, raising=False)
+    monkeypatch.setenv("HF_HOME", str(explicit))
+    monkeypatch.delenv("TORCH_HOME", raising=False)
+
+    assert tools.configure_model_home() == explicit
+    assert os.environ["HF_HOME"] == str(explicit)
+    assert os.environ["TORCH_HOME"] == str(explicit / "torch")

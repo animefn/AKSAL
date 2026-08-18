@@ -300,7 +300,10 @@ def _install_root() -> Path:
 
 
 def _write_manifest(payload: Path, work: Path) -> Path:
-    names = sorted(entry.name for entry in payload.iterdir())
+    # ``models`` is mutable user data. A release contains its explanatory
+    # README, but an update must never replace already-downloaded weights.
+    names = sorted(entry.name for entry in payload.iterdir()
+                   if entry.name != "models")
     if not names or any("\n" in name or "\r" in name for name in names):
         raise RuntimeError("release archive has invalid top-level entries")
     manifest = work / "manifest.txt"

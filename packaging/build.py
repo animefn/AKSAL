@@ -2,8 +2,9 @@
 
 Run this on the OS being targeted; PyInstaller does not cross-compile.  The
 default is an onedir bundle because a onefile torch application would unpack
-hundreds of megabytes on every launch.  Acoustic and Demucs model weights are
-not bundled and are cached in the platform's writable user cache on first use.
+hundreds of megabytes on every launch. Acoustic and Demucs model weights are
+not bundled; packaged builds download them into their adjacent ``models``
+directory on first use.
 
     python packaging/build.py [--onefile]
 """
@@ -135,6 +136,15 @@ def main() -> int:
         print((imports.stderr or imports.stdout or "")[-1500:])
         return 1
     print("  smoke test: model and separation imports ok")
+
+    # Empty directories disappear from zip files, so ship a small explanation.
+    # The updater deliberately preserves this mutable directory across updates.
+    model_dir = executable.parent / "models"
+    model_dir.mkdir(exist_ok=True)
+    (model_dir / "README.txt").write_text(
+        "AKSAL downloads acoustic and vocal-separation models here on first "
+        "use.\nKeep this folder beside the AKSAL executable.\n",
+        encoding="utf-8")
 
     target = executable if onefile else executable.parent
     total = (target.stat().st_size if onefile else

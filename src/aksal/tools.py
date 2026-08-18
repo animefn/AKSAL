@@ -12,9 +12,11 @@ Three ways out, in the order they are offered where a native download exists:
     C  stop, and add it to PATH yourself
 
 The executable may live in a read-only location such as /Applications or
-/usr/local/bin, so configuration, downloaded tools and model caches never live
-beside it. ``AKSAL_HOME`` and ``AKSAL_CACHE_HOME`` override the defaults for a
-portable or centrally managed installation.
+/usr/local/bin, so configuration and downloaded helper tools use per-user
+storage. Packaged builds keep model downloads in a visible ``models`` directory
+beside the executable whenever that directory is writable. ``AKSAL_HOME``,
+``AKSAL_CACHE_HOME``, and ``AKSAL_MODEL_HOME`` override their respective
+defaults for portable or centrally managed installations.
 """
 from __future__ import annotations
 
@@ -25,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -58,7 +61,7 @@ def home() -> Path:
 
 
 def cache_home() -> Path:
-    """Writable per-user cache for large, reproducible model downloads."""
+    """Writable per-user cache for temporary, reproducible downloads."""
     override = os.environ.get("AKSAL_CACHE_HOME")
     if override:
         return Path(override).expanduser()
@@ -71,6 +74,50 @@ def cache_home() -> Path:
     base = os.environ.get("XDG_CACHE_HOME")
     return (Path(base).expanduser() if base else
             Path.home() / ".cache") / "aksal"
+
+
+def _writable_directory(path: Path) -> bool:
+    """Create *path* and verify it accepts files without leaving a probe."""
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(prefix=".aksal-write-", dir=path):
+            pass
+        return True
+    except OSError:
+        return False
+
+
+def configure_model_home(*, log=print) -> Path | None:
+    """Select Hugging Face storage for a frozen, portable AKSAL build.
+
+    A caller-supplied ``HF_HOME`` remains authoritative. Packaged builds then
+    prefer ``AKSAL_MODEL_HOME`` or a visible ``models`` directory beside the
+    executable. Only a genuinely read-only installation falls back to the
+    native user cache. Source installs retain Hugging Face's normal defaults.
+    """
+    explicit_hf = os.environ.get("HF_HOME")
+    if explicit_hf:
+        selected = Path(explicit_hf).expanduser()
+        os.environ.setdefault("TORCH_HOME", str(selected / "torch"))
+        return selected
+    if not getattr(sys, "frozen", False):
+        return None
+
+    override = os.environ.get("AKSAL_MODEL_HOME")
+    preferred = (Path(override).expanduser() if override else
+                 Path(sys.executable).resolve().parent / "models")
+    if _writable_directory(preferred):
+        os.environ["HF_HOME"] = str(preferred)
+        os.environ.setdefault("TORCH_HOME", str(preferred / "torch"))
+        return preferred
+
+    fallback = cache_home() / "models"
+    fallback.mkdir(parents=True, exist_ok=True)
+    os.environ["HF_HOME"] = str(fallback)
+    os.environ.setdefault("TORCH_HOME", str(fallback / "torch"))
+    log(f"AKSAL cannot write to {preferred}; models will be stored in "
+        f"{fallback} instead.")
+    return fallback
 
 
 def _config_path() -> Path:

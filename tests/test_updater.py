@@ -189,6 +189,8 @@ def test_manifest_is_sorted_and_covers_top_level_payload(tmp_path):
     payload.mkdir()
     (payload / "z.txt").write_text("z")
     (payload / "_internal").mkdir()
+    (payload / "models").mkdir()
+    (payload / "models" / "README.txt").write_text("keep existing models")
     manifest = updater._write_manifest(payload, tmp_path)
     assert manifest.read_text(encoding="utf-8").splitlines() == [
         "_internal", "z.txt"]

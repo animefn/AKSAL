@@ -24,8 +24,9 @@ Windows and Linux x64 releases are ready to extract and run. Keep the
 `_internal` directory beside the AKSAL executable. You can add that whole
 directory to `PATH` if you want to run `aksal` from anywhere.
 
-AKSAL downloads its acoustic models on first use, so the first run takes
-longer and needs an internet connection.
+AKSAL downloads its acoustic models into the visible `models` folder beside
+the executable on first use, so the first run takes longer and needs an
+internet connection. Keep that folder when moving or updating AKSAL.
 
 Want to run it from source or see platform details? See
 **[installation and technical details](README_EXTENDED.md#installation-and-downloads)**.
@@ -184,14 +185,14 @@ imperfect lyrics can still need manual correction; see the
 
 ## Why “AKSAL”?
 
-**A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics—and a pun on the
-Arabic word أكسل (*aksal*), “lazier.” A fitting name for a lazier way to make
+**A**nimeFN **K**araoke **S**yllable **A**ligner for **L**yrics, a pun on the
+Arabic word أكسل (*aksal*), "lazier." A fitting name for a lazier way to make
 karaoke for your favourite anime songs.
 
 
 ## More information
 
-- **[Complete usage guide](USAGE.md)** — workflows and examples
-- **[Extended README](README_EXTENDED.md)** — advanced usage, internals,
+- **[Complete usage guide](USAGE.md)**: workflows and examples
+- **[Extended README](README_EXTENDED.md)**: advanced usage, internals,
   Japanese analysis, limitations, changelog, and roadmap
-- **[Third-party notices](THIRD-PARTY.md)** — dependencies, authors, and licences
+- **[Third-party notices](THIRD-PARTY.md)**: dependencies, authors, and licences
