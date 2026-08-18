@@ -66,7 +66,26 @@ not generated yet—but a possible Phase 3 is in the community vote below.
 
 ### Video tutorials
 
-*Coming soon.*
+If you are completely new to karaoke making, AKSAL should not be your first
+stop. Start by learning how karaoke timing works and becoming comfortable with
+the essential Aegisub timing shortcuts. AKSAL makes the work much faster, but
+you still need to understand the result well enough to review it.
+
+These introductions cover the basics:
+
+- [How to K-time using Aegisub](https://www.youtube.com/watch?v=3H5GuA--jhs)
+
+or Some alternatives
+- [Aegisub Lesson 10 — How to make a karaoke video with free software](https://www.youtube.com/watch?v=4YTIaMeKXts)
+- [Aegisub karaoke timing tutorial](https://www.youtube.com/watch?v=BYhYgNnpNM0)
+- [Vietnamese: Karaoke timing in Aegisub](https://www.youtube.com/watch?v=KG8IR8_LX_M)
+
+Once you understand the concept, these tutorials show the three main AKSAL
+workflows:
+
+1. [Example 1: create karaoke from timed romaji lyrics](https://youtu.be/EnUfPCtAYCs)
+2. [Example 2: create karaoke from exact, untimed Japanese lyrics](https://youtu.be/1n42nikhjBo)
+3. [Example 3: create karaoke from a full Japanese lyric sheet](https://youtu.be/BwdsPS7k6J4)
 
 ### Explanation
 
@@ -189,6 +208,31 @@ imperfect lyrics can still need manual correction; see the
 Arabic word أكسل (*aksal*), "lazier." A fitting name for a lazier way to make
 karaoke for your favourite anime songs.
 
+## FAQ
+
+### How is AKSAL different from tools such as KarASS?
+
+[KarASS](https://github.com/vladkorotnev/karass) gives you a simple interface
+for manually timing lyric lines and syllables. AKSAL listens to the song and
+does that timing automatically; you review the result and fix the places where
+it gets things wrong.
+
+### How good are AKSAL's results?
+
+It depends on your use case and quality standards. I have seen human-made
+karaoke that is far worse than what AKSAL produces. In my opinion, AKSAL is not
+100% perfect, but its results are very acceptable for fun and singing along.
+For a more formal release, you should review and correct them.
+
+### Will AKSAL support languages other than Japanese?
+
+It is not currently planned, but feel free to port AKSAL to your language. The
+current acoustic model, segmentation, and romaji generation are all
+Japanese-specific. A Korean or Chinese port would need a suitable acoustic
+model plus language-specific segmentation and transliteration. Languages that
+already use a Latin-based script and spaces may not need transliteration or the
+same kind of segmentation, but they would still need a compatible acoustic
+model and language-specific testing.
 
 ## More information
 
