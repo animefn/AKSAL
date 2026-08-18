@@ -20,9 +20,10 @@ sung units and convert Japanese lyrics into romaji while making the karaoke.
 
 ### **[⬇️ Download the latest AKSAL release](https://github.com/animefn/AKSAL/releases/latest)**
 
-Windows and Linux x64 releases are ready to extract and run. Keep the
-`_internal` directory beside the AKSAL executable. You can add that whole
-directory to `PATH` if you want to run `aksal` from anywhere.
+Windows and Linux x64 releases are ready to extract and run. Each release
+includes both `aksal` (command line) and `aksal-gui` (desktop GUI), sharing
+one `_internal` directory -- keep it beside them. You can add that whole
+directory to `PATH` if you want to run either from anywhere.
 
 AKSAL downloads its acoustic models into the visible `models` folder beside
 the executable on first use, so the first run takes longer and needs an

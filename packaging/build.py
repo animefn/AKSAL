@@ -6,6 +6,12 @@ hundreds of megabytes on every launch. Acoustic and Demucs model weights are
 not bundled; packaged builds download them into their adjacent ``models``
 directory on first use.
 
+Builds two executables from packaging/aksal.spec: ``aksal`` (the CLI) and
+``aksal-gui`` (the desktop GUI). In onedir mode they land side by side in one
+dist/aksal directory, sharing one runtime instead of paying for it twice; in
+onefile mode each is fully self-contained (see the spec for why those need
+different builds).
+
     python packaging/build.py [--onefile]
 """
 from __future__ import annotations
@@ -20,24 +26,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DIST = Path(os.environ.get("AKSAL_DIST", ROOT / "dist"))
 WORK = Path(os.environ.get("AKSAL_WORK", ROOT / "build"))
-
-# Optional packages pulled in by transformers/torch but never reached by AKSAL.
-# Only exclude complete packages that AKSAL itself does not import.
-EXCLUDE = [
-    "tensorflow", "flax", "jax", "jaxlib", "keras", "torchvision",
-    "matplotlib", "pandas", "IPython", "notebook", "jupyter",
-    "pytest", "_pytest", "tkinter",
-    # AKSAL invokes the separately updatable executable selected by tools.py.
-    "yt_dlp",
-    "cv2", "av", "onnxruntime", "onnx", "sklearn", "nltk",
-    "sentencepiece", "PIL", "timm", "accelerate", "datasets", "evaluate",
-    "sudachipy", "sudachidict_core", "sudachidict_full", "sudachidict_small",
-]
-
-HIDDEN = [
-    "aksal.dualctc", "aksal.hfmodel", "aksal.catalog", "aksal.fetch",
-    "aksal.discover", "aksal.tools", "aksal.updater", "demucs.api",
-]
+SPEC = ROOT / "packaging" / "aksal.spec"
 
 
 def build_version() -> str:
@@ -52,9 +41,56 @@ def build_version() -> str:
     return match.group(1)
 
 
-def executable_path(onefile: bool) -> Path:
-    name = "aksal.exe" if sys.platform == "win32" else "aksal"
+def executable_name(base: str) -> str:
+    return f"{base}.exe" if sys.platform == "win32" else base
+
+
+def executable_path(base: str, onefile: bool) -> Path:
+    name = executable_name(base)
     return DIST / name if onefile else DIST / "aksal" / name
+
+
+def smoke_test_cli(executable: Path, version: str) -> str | None:
+    """Return an error message, or None if the CLI executable is alive."""
+    probe = subprocess.run(
+        [str(executable), "--help"], capture_output=True, text=True)
+    if probe.returncode != 0 or "phase1" not in (probe.stdout or ""):
+        return ("the executable does not start:\n"
+                + (probe.stderr or probe.stdout or "")[-1500:])
+    print("  smoke test: aksal --help ok")
+
+    version_probe = subprocess.run(
+        [str(executable), "--version"], capture_output=True, text=True)
+    if (version_probe.returncode != 0 or
+            version not in (version_probe.stdout or "")):
+        return ("version stamp failed:\n"
+                + (version_probe.stderr or version_probe.stdout or "")[-1500:])
+    print(f"  smoke test: aksal --version {version} ok")
+
+    smoke_env = dict(os.environ, AKSAL_PACKAGING_SMOKE="1")
+    imports = subprocess.run(
+        [str(executable)], capture_output=True, text=True, env=smoke_env)
+    if imports.returncode != 0 or "packaging imports ok" not in imports.stdout:
+        return ("model/separation import smoke failed:\n"
+                + (imports.stderr or imports.stdout or "")[-1500:])
+    print("  smoke test: aksal model and separation imports ok")
+    return None
+
+
+def smoke_test_gui(executable: Path) -> str | None:
+    """Return an error message, or None if the GUI executable is alive.
+
+    Constructs the main window offscreen and exits rather than opening a
+    blocking event loop, so this runs unattended in CI with no display.
+    """
+    smoke_env = dict(os.environ, AKSAL_GUI_PACKAGING_SMOKE="1")
+    probe = subprocess.run(
+        [str(executable)], capture_output=True, text=True, env=smoke_env)
+    if probe.returncode != 0 or "gui packaging smoke ok" not in probe.stdout:
+        return ("the GUI executable does not start:\n"
+                + (probe.stderr or probe.stdout or "")[-1500:])
+    print("  smoke test: aksal-gui window construction ok")
+    return None
 
 
 def main() -> int:
@@ -69,25 +105,10 @@ def main() -> int:
 
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--name", "aksal", "--noconfirm", "--clean", "--console",
-        "--onefile" if onefile else "--onedir",
+        "--noconfirm", "--clean",
         "--distpath", str(DIST), "--workpath", str(WORK),
-        "--specpath", str(WORK), "--paths", str(ROOT / "src"),
-        "--collect-submodules", "transformers.models.wav2vec2",
-        "--collect-submodules", "transformers.models.wavlm",
-        "--collect-data", "unidic_lite", "--collect-data", "ipadic",
-        # PyInstaller's pkg_resources hook imports jaraco.text at startup.
-        "--collect-data", "jaraco.text",
-        # Demucs' registry is package data; model weights remain a download.
-        "--collect-data", "demucs",
-        # The compressed JMdict index is AKSAL package data.
-        "--collect-data", "aksal",
-        str(ROOT / "packaging" / "entry.py"),
+        str(SPEC),
     ]
-    for module in EXCLUDE:
-        cmd += ["--exclude-module", module]
-    for module in HIDDEN:
-        cmd += ["--hidden-import", module]
 
     # This module exists only while PyInstaller analyses the package.  The
     # frozen bytecode keeps the value, while source installs continue to use
@@ -99,56 +120,44 @@ def main() -> int:
     stamp.write_text(f'VERSION = "{version}"\n', encoding="utf-8")
     print(f"building AKSAL {version}")
     print(subprocess.list2cmdline(cmd), flush=True)
+    env = dict(os.environ, AKSAL_ONEFILE="1") if onefile else None
     try:
-        result = subprocess.run(cmd, cwd=ROOT)
+        result = subprocess.run(cmd, cwd=ROOT, env=env)
     finally:
         stamp.unlink(missing_ok=True)
     if result.returncode != 0:
         return result.returncode
 
-    # A completed freeze is not evidence that the program imports. Run both a
-    # CLI probe and the optional dependency/model import probe before archiving.
-    executable = executable_path(onefile)
+    # A completed freeze is not evidence that either program imports or
+    # starts. Probe both before archiving.
+    cli_exe = executable_path("aksal", onefile)
+    gui_exe = executable_path("aksal-gui", onefile)
     if os.name != "nt":
-        executable.chmod(executable.stat().st_mode | 0o111)
-    probe = subprocess.run(
-        [str(executable), "--help"], capture_output=True, text=True)
-    if probe.returncode != 0 or "phase1" not in (probe.stdout or ""):
-        print("\nBUILD IS DEAD -- the executable does not start:")
-        print((probe.stderr or probe.stdout or "")[-1500:])
-        return 1
-    print("  smoke test: --help ok")
+        for exe in (cli_exe, gui_exe):
+            exe.chmod(exe.stat().st_mode | 0o111)
 
-    version_probe = subprocess.run(
-        [str(executable), "--version"], capture_output=True, text=True)
-    if (version_probe.returncode != 0 or
-            version not in (version_probe.stdout or "")):
-        print("\nBUILD VERSION STAMP FAILED:")
-        print((version_probe.stderr or version_probe.stdout or "")[-1500:])
-        return 1
-    print(f"  smoke test: version {version} ok")
-
-    smoke_env = dict(os.environ, AKSAL_PACKAGING_SMOKE="1")
-    imports = subprocess.run(
-        [str(executable)], capture_output=True, text=True, env=smoke_env)
-    if imports.returncode != 0 or "packaging imports ok" not in imports.stdout:
-        print("\nBUILD IMPORT SMOKE FAILED:")
-        print((imports.stderr or imports.stdout or "")[-1500:])
-        return 1
-    print("  smoke test: model and separation imports ok")
+    for error in (smoke_test_cli(cli_exe, version), smoke_test_gui(gui_exe)):
+        if error:
+            print("\nBUILD IS DEAD --", error)
+            return 1
 
     # Empty directories disappear from zip files, so ship a small explanation.
     # The updater deliberately preserves this mutable directory across updates.
-    model_dir = executable.parent / "models"
+    # Both executables live in the same directory in either mode, so one
+    # models/ folder beside them covers both.
+    model_dir = cli_exe.parent / "models"
     model_dir.mkdir(exist_ok=True)
     (model_dir / "README.txt").write_text(
         "AKSAL downloads acoustic and vocal-separation models here on first "
-        "use.\nKeep this folder beside the AKSAL executable.\n",
+        "use.\nKeep this folder beside the AKSAL executables.\n",
         encoding="utf-8")
 
-    target = executable if onefile else executable.parent
-    total = (target.stat().st_size if onefile else
-             sum(f.stat().st_size for f in target.rglob("*") if f.is_file()))
+    if onefile:
+        target = f"{cli_exe} + {gui_exe}"
+        total = cli_exe.stat().st_size + gui_exe.stat().st_size
+    else:
+        target = cli_exe.parent
+        total = sum(f.stat().st_size for f in target.rglob("*") if f.is_file())
     print(f"\nbuilt: {target}")
     print(f"size : {total / 1e6:.0f} MB")
     return 0

@@ -139,10 +139,11 @@ jobs:
           notes=$(cat <<'EOF'
           Native x64 builds for Windows and Linux.
 
-          On Windows, unzip the archive and run `aksal.exe`. On Linux, extract
-          the tarball and run `aksal`. Keep the `_internal` directory beside
-          the executable on both systems. You may add the extracted directory
-          to `PATH`.
+          On Windows, unzip the archive and run `aksal.exe` (command line) or
+          `aksal-gui.exe` (desktop GUI). On Linux, extract the tarball and run
+          `aksal` or `aksal-gui`. Both share the same `_internal` directory;
+          keep it beside them on both systems. You may add the extracted
+          directory to `PATH`.
 
           Acoustic and Demucs models download into the visible `models`
           directory beside the executable on first use and survive updates.

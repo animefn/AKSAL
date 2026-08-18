@@ -53,5 +53,8 @@ out/
 *.log
 dist/
 build/
+# PyInstaller writes a throwaway .spec beside whatever entry point you point
+# it at when none is given; packaging/aksal.spec is the real, checked-in one.
 *.spec
+!packaging/aksal.spec
 src/aksal/_frozen_version.py
