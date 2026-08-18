@@ -39,7 +39,9 @@ Want to run it from source or see platform details? See
 - Can group highlights by syllable or by word.
 - Can map a full three-to-four-minute song onto its shorter TV edit.
 - Can help find lyrics and a reference track from the anime title.
-- Runs from the command line; there is no GUI yet.
+- Runs from the command line, or from a very simple `aksal-gui` desktop GUI
+  that walks through the same two phases (see
+  [installation and technical details](README_EXTENDED.md#installation-and-downloads)).
 
 ## Where AKSAL fits in the karaoke-making process
 

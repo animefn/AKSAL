@@ -71,8 +71,11 @@ separate = ["demucs==4.1.0"]
 # would change results without anyone asking -- but it should be free to be
 # current when installed.
 fetch = ["yt-dlp"]
+# The desktop GUI (aksal-gui): pick a video and lyrics, run phase1, fix the
+# lines in Aegisub, run phase2. Optional because the CLI needs none of it.
+gui = ["PyQt6==6.9.1"]
 dev = ["pytest==9.1.1", "pyflakes", "pyinstaller==6.22.0"]
-all = ["aksal[separate,fetch]"]
+all = ["aksal[separate,fetch,gui]"]
 
 [project.urls]
 Homepage = "https://github.com/animefn/AKSAL"
@@ -81,6 +84,7 @@ Issues = "https://github.com/animefn/AKSAL/issues"
 
 [project.scripts]
 aksal = "aksal.cli:main"
+aksal-gui = "aksal.gui:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

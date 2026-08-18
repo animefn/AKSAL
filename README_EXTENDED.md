@@ -61,6 +61,14 @@ For optional vocal separation:
 pip install -e ".[separate]"
 ```
 
+For the desktop GUI (`aksal-gui`): pick a video and lyrics, run phase 1, fix
+the lines in Aegisub, then run phase 2 -- all without typing a command line:
+
+```bash
+pip install -e ".[gui]"
+aksal-gui
+```
+
 The repository pins application dependencies because model behavior and
 alignment accuracy can change across library versions. Release builders use
 `requirements.lock` and a CPU-only PyTorch index.
